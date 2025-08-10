@@ -1,0 +1,2302 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Alvora Air Quality Simulator</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
+    
+    <!-- Leaflet.js for mapping (used by Planner) -->
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <link rel="stylesheet" href="https://unpkg.com/leaflet-routing-machine@3.2.12/dist/leaflet-routing-machine.css" />
+    <script src="https://unpkg.com/leaflet-routing-machine@3.2.12/dist/leaflet-routing-machine.js"></script>
+
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <style>
+        body {
+            font-family: 'Inter', sans-serif;
+            overflow-x: hidden; /* Prevent horizontal scroll */
+            background-color: #111827;
+            color: #e5e7eb;
+        }
+        .gradient-text {
+            background: linear-gradient(to right, #4ade80, #3b82f6);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+        }
+        .card {
+            background-color: #1f2937;
+            backdrop-filter: blur(10px);
+            border: 1px solid #374151;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+        }
+        .aqi-display {
+            transition: all 0.5s ease-in-out;
+        }
+        #model-container, #planner-container {
+            width: 100%;
+            height: 100%;
+            min-height: 500px;
+            cursor: grab;
+            border-radius: 0.75rem; /* rounded-xl */
+            overflow: hidden; /* Ensure Three.js content stays within bounds */
+        }
+        .tab-btn {
+            transition: all 0.2s ease-in-out;
+            padding: 0.5rem 1rem;
+            border-radius: 0.5rem;
+            font-weight: 500;
+            color: #d1d5db;
+            background-color: transparent;
+        }
+        .tab-btn.active {
+            background-color: #4ade80;
+            color: #111827;
+            box-shadow: 0 2px 4px rgba(0, 0, 0, 0.2);
+        }
+        #tooltip {
+            position: absolute;
+            background: rgba(17, 24, 39, 0.95);
+            color: white;
+            padding: 12px 18px;
+            border-radius: 10px;
+            border: 1px solid rgba(255, 255, 255, 0.25);
+            font-size: 13px;
+            pointer-events: none;
+            opacity: 0;
+            transition: opacity 0.2s ease-in-out, transform 0.2s ease-in-out;
+            transform: translate(-50%, calc(-100% - 20px));
+            white-space: nowrap;
+            z-index: 1000;
+            max-width: 250px;
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+        }
+        #tooltip.visible {
+            opacity: 1;
+            transform: translate(-50%, calc(-100% - 15px));
+        }
+        #tooltip h3 {
+            font-weight: 700;
+            color: #4ade80;
+            margin-bottom: 6px;
+            font-size: 15px;
+        }
+        #tooltip p {
+            font-size: 12px;
+            color: #a1a1aa;
+            margin-bottom: 6px;
+            white-space: normal;
+        }
+        #tooltip .efficiency {
+            font-size: 12px;
+            font-weight: 600;
+            color: #67e8f9;
+            display: block;
+            margin-top: 4px;
+        }
+        
+        /* New Planner Styles */
+        #planner-container { background-color: #e5e7eb; color: #1f2937; }
+        #planner-container #map { height: 100%; width: 100%; z-index: 10; cursor: crosshair; }
+        #planner-container .leaflet-routing-container, 
+        #planner-container .leaflet-control-container .leaflet-control-attribution { display: none; }
+        #planner-container .loader { border-top-color: #3b82f6; animation: spin 1s linear infinite; }
+        @keyframes spin { 100% { transform: rotate(360deg); } }
+        #planner-container .side-panel::-webkit-scrollbar { width: 6px; }
+        #planner-container .side-panel::-webkit-scrollbar-track { background: #f8fafc; }
+        #planner-container .side-panel::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 3px; }
+        #planner-container .blinking-text { animation: blinker 1.5s linear infinite; }
+        @keyframes blinker { 50% { opacity: 0.3; } }
+        #planner-container .log-entry { transition: background-color 0.5s ease; border-left: 2px solid transparent; padding-left: 8px;}
+        #planner-container .log-entry.log-info { border-left-color: #3b82f6; }
+        #planner-container .log-entry.log-warn { border-left-color: #f97316; }
+        #planner-container .log-entry.log-success { border-left-color: #22c55e; }
+        #planner-container .unit-icon { background-color: white; border-radius: 50%; border: 2px solid black; transition: transform 0.2s, background-color 0.3s; }
+        #planner-container .unit-icon.selected { transform: scale(1.5); box-shadow: 0 0 15px #3b82f6; }
+        #planner-container .leaflet-popup-content-wrapper { border-radius: 8px; }
+        #planner-container .source-icon { font-size: 24px; text-shadow: 0 0 5px white; }
+
+        /* Styles for Comparison Table */
+        .table-container { background-color: #1f2937; }
+        .comparison-section th, .comparison-section td { border-bottom: 1px solid #374151; }
+        .winner-badge { background-color: #10b981; color: #ffffff; font-weight: 600; padding: 0.25rem 0.75rem; border-radius: 9999px; font-size: 0.875rem; }
+        .source-section { background-color: #1f2937; }
+
+    </style>
+</head>
+<body class="bg-gray-900 text-white antialiased">
+
+    <div class="container mx-auto p-4 md:p-8">
+        
+        <header class="text-center mb-8">
+            <h1 class="text-4xl md:text-5xl font-bold gradient-text">alvora</h1>
+            <p class="text-gray-400 mt-2">Air Quality Simulation & Comparison Dashboard</p>
+        </header>
+
+        <main class="grid grid-cols-1 lg:grid-cols-3 gap-8">
+
+            <!-- Left Column: Controls & Live Data -->
+            <div class="lg:col-span-1 space-y-8">
+                
+                <div class="card rounded-2xl p-6">
+                    <h2 class="text-xl font-semibold mb-4 border-b border-gray-700 pb-2">Simulation Controls</h2>
+                    <div class="space-y-4">
+                        <div>
+                            <label for="pm25" class="text-sm font-medium text-gray-300">PM2.5 (µg/m³)</label>
+                            <input type="number" id="pm25" value="185" class="w-full bg-gray-800 border border-gray-600 rounded-lg p-2 mt-1">
+                        </div>
+                        <div>
+                            <label for="pm10" class="text-sm font-medium text-gray-300">PM10 (µg/m³)</label>
+                            <input type="number" id="pm10" value="250" class="w-full bg-gray-800 border border-gray-600 rounded-lg p-2 mt-1">
+                        </div>
+                        <div>
+                            <label for="no2" class="text-sm font-medium text-gray-300">NO₂ (µg/m³)</label>
+                            <input type="number" id="no2" value="85" class="w-full bg-gray-800 border border-gray-600 rounded-lg p-2 mt-1">
+                        </div>
+                        <div>
+                            <label for="voc" class="text-sm font-medium text-gray-300">VOCs (ppb)</label>
+                            <input type="number" id="voc" value="500" class="w-full bg-gray-800 border border-gray-600 rounded-lg p-2 mt-1">
+                        </div>
+                        <div>
+                            <label for="sim-duration" class="text-sm font-medium text-gray-300">Simulation Duration (minutes)</label>
+                            <input type="number" id="sim-duration" value="60" class="w-full bg-gray-800 border border-gray-600 rounded-lg p-2 mt-1">
+                        </div>
+                    </div>
+                    <div class="flex space-x-4 mt-6">
+                        <button id="startBtn" class="w-full bg-green-600 hover:bg-green-700 font-bold py-3 px-4 rounded-lg">Start Simulation</button>
+                        <button id="resetBtn" class="w-full bg-gray-600 hover:bg-gray-700 font-bold py-3 px-4 rounded-lg">Reset</button>
+                    </div>
+                </div>
+
+                <div class="card rounded-2xl p-6">
+                    <h2 class="text-xl font-semibold mb-4 border-b border-gray-700 pb-2">Live Data</h2>
+                    <div class="flex justify-center items-center flex-col my-4">
+                         <div id="aqi-display-container" class="aqi-display w-40 h-40 rounded-full flex flex-col justify-center items-center border-4" style="border-color: #ef4444;">
+                            <span class="text-4xl font-bold" id="current-aqi">...</span>
+                            <span class="text-sm text-gray-400">AQI</span>
+                        </div>
+                        <span id="aqi-category" class="mt-3 font-semibold text-lg" style="color: #ef4444;">...</span>
+                    </div>
+                    <div class="space-y-3 text-sm">
+                        <div class="flex justify-between"><span>PM2.5:</span><span id="live-pm25" class="font-semibold">... µg/m³</span></div>
+                        <div class="flex justify-between"><span>PM10:</span><span id="live-pm10" class="font-semibold">... µg/m³</span></div>
+                        <div class="flex justify-between"><span>NO₂:</span><span id="live-no2" class="font-semibold">... µg/m³</span></div>
+                        <div class="flex justify-between"><span>VOCs:</span><span id="live-voc" class="font-semibold">... ppb</span></div>
+                        <div class="flex justify-between border-t border-gray-700 pt-3 mt-3"><span>Simulated Time:</span><span id="sim-time" class="font-semibold">0 mins</span></div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Right Column: Visualizations -->
+            <div class="lg:col-span-2 card rounded-2xl p-6 flex flex-col relative">
+                <div class="flex items-center justify-between mb-4">
+                    <h2 class="text-xl font-semibold">Visualization</h2>
+                    <div class="flex space-x-1 bg-gray-800 p-1 rounded-lg">
+                        <button id="model-view-btn" class="tab-btn active">Mechanism</button>
+                        <button id="data-view-btn" class="tab-btn">Data</button>
+                        <button id="comparison-view-btn" class="tab-btn">Comparison</button>
+                        <button id="coverage-view-btn" class="tab-btn">Coverage</button>
+                        <button id="consumption-view-btn" class="tab-btn">Consumption</button>
+                        <button id="planner-view-btn" class="tab-btn">Planner</button>
+                    </div>
+                </div>
+                <div id="model-container" class="flex-grow relative">
+                    <div class="absolute top-2 left-2 z-10">
+                        <select id="model-selector" class="bg-gray-700 border border-gray-600 text-white text-sm rounded-lg focus:ring-blue-500 focus:border-blue-500 block w-full p-2.5">
+                            <option value="Alvora" selected>Alvora</option>
+                            <option value="HEPA">HEPA</option>
+                            <option value="PlasmaIon">Plasma Ion</option>
+                            <option value="ActivatedCarbon">Activated Carbon</option>
+                        </select>
+                    </div>
+                </div>
+                <div id="chart-container" class="hidden flex-grow relative" style="min-height: 500px;"><canvas id="aqiChart"></canvas></div>
+                
+                <div id="comparison-container" class="hidden flex-grow relative p-4 comparison-section" style="min-height: 500px;">
+                    <h2 class="text-2xl font-bold text-white mb-4">Filter Comparison Showdown</h2>
+                    <p class="mb-6 text-gray-400">Compare Alvora against other common air purification technologies.</p>
+                    <div class="flex items-center space-x-4 mb-6">
+                        <label for="focus-pollutant" class="text-lg font-medium text-gray-300">Focus Pollutant:</label>
+                        <select id="focus-pollutant" class="bg-gray-700 border border-gray-600 text-white text-sm rounded-lg focus:ring-blue-500 focus:border-blue-500 block w-full p-2.5 max-w-xs">
+                            <option value="PM2.5" selected>PM2.5</option>
+                            <option value="PM10">PM10</option>
+                            <option value="NO2">NO₂</option>
+                            <option value="VOCs">VOCs</option>
+                        </select>
+                        <button id="run-comparison" class="px-6 py-2.5 bg-blue-600 text-white font-semibold rounded-lg hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-opacity-50">
+                            Run Comparison
+                        </button>
+                    </div>
+                    <div class="table-container rounded-xl shadow-lg overflow-hidden">
+                        <div class="overflow-x-auto">
+                            <table class="w-full text-sm text-left text-gray-300">
+                                <thead class="text-xs text-gray-400 uppercase bg-gray-800">
+                                    <tr>
+                                        <th scope="col" class="px-6 py-3">Filter Type</th>
+                                        <th scope="col" class="px-6 py-3 text-center">Efficiency (PM2.5)</th>
+                                        <th scope="col" class="px-6 py-3 text-center">Efficiency (PM10)</th>
+                                        <th scope="col" class="px-6 py-3 text-center">Efficiency (NO₂)</th>
+                                        <th scope="col" class="px-6 py-3 text-center">Initial Cost</th>
+                                        <th scope="col" class="px-6 py-3 text-center">Annual Maint.</th>
+                                        <th scope="col" class="px-6 py-3 text-center">Annual Energy</th>
+                                        <th scope="col" class="px-6 py-3 text-center">Lifespan</th>
+                                        <th scope="col" class="px-6 py-3 text-center">Total Cost (10 yrs)</th>
+                                        <th scope="col" class="px-6 py-3 text-center">Effectiveness Score</th>
+                                        <th scope="col" class="px-6 py-3 text-center">Winner</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="comparison-table-body"></tbody>
+                            </table>
+                        </div>
+                    </div>
+                     <div class="source-section mt-8 p-6 rounded-xl">
+                        <h2 class="text-2xl font-bold text-white mb-4">Data Sources & Methodology</h2>
+                        <div class="text-gray-400 space-y-4">
+                            <p>The data presented in this comparison is aggregated and synthesized from a variety of reputable sources to provide a balanced overview. The "Effectiveness Score" is a proprietary metric calculated based on weighted pollutant removal efficiency against the total cost of ownership over a 10-year period.</p>
+                            <ul class="list-disc list-inside space-y-2">
+                                <li><span class="font-semibold text-gray-200">Efficiency Ratings:</span> Based on industry standards and lab tests for each technology type.</li>
+                                <li><span class="font-semibold text-gray-200">Cost Analysis:</span> Includes initial purchase price plus estimated annual maintenance (filter replacements) and energy consumption costs.</li>
+                                <li><span class="font-semibold text-gray-200">Lifespan:</span> Reflects the expected operational life of the core unit and key components.</li>
+                                <li><span class="font-semibold text-gray-200">Effectiveness Score:</span> A higher score indicates better performance for the cost. The score is heavily influenced by the "Focus Pollutant" selected above.</li>
+                            </ul>
+                        </div>
+                    </div>
+                </div>
+
+                <div id="coverage-calculator-container" class="hidden flex-grow relative p-4" style="min-height: 500px;">
+                    <div class="grid grid-cols-1 lg:grid-cols-2 gap-6 h-full">
+                        <div class="flex flex-col space-y-6">
+                            <div class="card p-4 rounded-lg">
+                                <h3 class="font-semibold mb-3 text-lg">1. Define Area</h3>
+                                <div class="space-y-3">
+                                    <div><label for="coverage-area" class="text-sm">Area Size (km²)</label><input type="number" id="coverage-area" value="1" class="w-full bg-gray-800 border border-gray-600 rounded-lg p-2 mt-1"></div>
+                                    <div>
+                                        <label for="coverage-aqi" class="text-sm">Current AQI</label>
+                                        <input type="number" id="coverage-aqi" value="345" class="w-full bg-gray-800 border border-gray-600 rounded-lg p-2 mt-1">
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="card p-4 rounded-lg flex-grow">
+                                <h3 class="font-semibold mb-3 text-lg">2. Deployment Calculation</h3>
+                                <div id="coverage-results-summary" class="space-y-2 text-sm"></div>
+                                <button id="calculate-coverage-btn" class="w-full bg-green-600 hover:bg-green-700 font-bold py-2 px-4 rounded-lg mt-4">Calculate Requirements</button>
+                            </div>
+                        </div>
+                        <div class="flex flex-col space-y-6">
+                            <div class="card p-4 rounded-lg flex-grow"><h3 class="font-semibold text-lg mb-2">Deployment Analysis</h3><div class="relative h-64"><canvas id="coverageBarChart"></canvas></div></div>
+                        </div>
+                    </div>
+                </div>
+
+                <div id="consumption-container" class="hidden flex-grow relative p-4" style="min-height: 500px;">
+                    <div class="grid grid-cols-1 lg:grid-cols-2 gap-6 h-full">
+                        <div class="flex flex-col space-y-6">
+                            <div class="card p-4 rounded-lg text-center">
+                                <h3 class="font-semibold text-lg mb-2">Live Power Draw</h3>
+                                <div id="power-draw-gauge" class="relative w-48 h-48 mx-auto flex items-center justify-center">
+                                    <div id="power-draw-value" class="absolute inset-0 flex items-center justify-center text-3xl font-bold">0 W</div>
+                                </div>
+                                <div id="power-mode" class="mt-2 font-semibold text-gray-400">Mode: Standby</div>
+                            </div>
+                            <div class="card p-4 rounded-lg">
+                                <h3 class="font-semibold text-lg mb-3">Total Consumption</h3>
+                                <div class="space-y-2 text-sm">
+                                    <div class="flex justify-between"><span>Energy Used:</span><span id="total-energy" class="font-semibold">0.00 kWh</span></div>
+                                    <div class="flex justify-between"><span>Water Consumed:</span><span id="total-water" class="font-semibold">0.0 mL</span></div>
+                                    <div class="flex justify-between"><span>Nutrients Used:</span><span id="total-nutrients" class="font-semibold">0.0 mL</span></div>
+                                </div>
+                            </div>
+                            <div class="card p-4 rounded-lg">
+                                <h3 class="font-semibold text-lg mb-3">Simulate Impact</h3>
+                                <div class="flex space-x-2">
+                                    <button class="w-full bg-blue-600 hover:bg-blue-700 text-sm py-2 rounded-lg" onclick="simulateImpact(30)">30 min</button>
+                                    <button class="w-full bg-blue-600 hover:bg-blue-700 text-sm py-2 rounded-lg" onclick="simulateImpact(60)">60 min</button>
+                                    <button class="w-full bg-blue-600 hover:bg-blue-700 text-sm py-2 rounded-lg" onclick="simulateImpact(90)">90 min</button>
+                                </div>
+                                <div id="impact-results" class="mt-3 text-sm text-center"></div>
+                            </div>
+                        </div>
+                        <div class="card p-4 rounded-lg flex-grow">
+                            <h3 class="font-semibold text-lg mb-2">Power Consumption Over Time (Watts)</h3>
+                            <div class="relative h-80">
+                                <canvas id="powerConsumptionChart"></canvas>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                
+                <div id="planner-container" class="hidden flex-grow relative p-0" style="min-height: 500px;">
+                    <div class="flex h-screen w-screen" style="font-family: 'Inter', sans-serif;">
+                        <!-- Side Panel -->
+                        <aside class="side-panel h-full w-full max-w-md bg-white shadow-lg z-20 flex flex-col flex-shrink-0">
+                            <header class="p-4 border-b flex-shrink-0">
+                                <h1 class="text-xl font-bold text-gray-800">Alvora Deployment Planner</h1>
+                                <p class="text-sm text-gray-500">Advanced Environmental & Financial Simulation</p>
+                            </header>
+
+                            <!-- Tabs -->
+                            <div class="border-b flex-shrink-0">
+                                <nav class="-mb-px flex space-x-4 px-4" aria-label="Tabs">
+                                    <button id="tab-btn-mission" class="planner-tab-btn border-blue-500 text-blue-600 whitespace-nowrap py-3 px-1 border-b-2 font-medium text-sm">Mission</button>
+                                    <button id="tab-btn-analysis" class="planner-tab-btn border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300 whitespace-nowrap py-3 px-1 border-b-2 font-medium text-sm">Analysis</button>
+                                </nav>
+                            </div>
+                            
+                            <div class="flex-grow overflow-y-auto">
+                                <!-- Mission Tab Content -->
+                                <div id="tab-content-mission" class="p-4 space-y-4">
+                                    <div class="p-4 bg-slate-50 rounded-lg border">
+                                        <h2 class="font-semibold text-gray-700 mb-2">1. Analysis Mode</h2>
+                                        <div class="flex items-center space-x-4">
+                                            <label class="flex items-center space-x-2 cursor-pointer">
+                                                <input type="radio" name="analysis-mode" id="mode-route" value="route" class="form-radio text-blue-600" checked>
+                                                <span class="text-sm font-medium">Route Mode</span>
+                                            </label>
+                                            <label class="flex items-center space-x-2 cursor-pointer">
+                                                <input type="radio" name="analysis-mode" id="mode-area" value="area" class="form-radio text-blue-600">
+                                                <span class="text-sm font-medium">Area Mode</span>
+                                            </label>
+                                        </div>
+                                    </div>
+
+                                    <div id="route-planner-container">
+                                        <div class="p-4 bg-slate-50 rounded-lg border">
+                                            <h2 class="font-semibold text-gray-700 mb-2">2. Define Route</h2>
+                                            <div class="grid grid-cols-2 gap-3">
+                                                <button id="set-start-btn" class="w-full bg-green-600 text-white p-2 rounded-md hover:bg-green-700 text-sm font-semibold">Set Start</button>
+                                                <button id="set-end-btn" class="w-full bg-red-600 text-white p-2 rounded-md hover:bg-red-700 text-sm font-semibold" disabled>Set End</button>
+                                            </div>
+                                        </div>
+                                    </div>
+                                    <div id="area-planner-container" class="hidden">
+                                        <div class="p-4 bg-slate-50 rounded-lg border">
+                                            <h2 class="font-semibold text-gray-700 mb-2">2. Define Area</h2>
+                                            <button id="define-area-btn" class="w-full bg-indigo-600 text-white p-2 rounded-md hover:bg-indigo-700 text-sm font-semibold">Define Area</button>
+                                        </div>
+                                    </div>
+                                    
+                                    <p id="instruction-text" class="text-center text-sm text-blue-600 font-semibold blinking-text mt-2">Select a mode to begin.</p>
+                                    <button id="reset-btn" class="w-full bg-gray-500 text-white p-2 rounded-md hover:bg-gray-600 hidden mt-2 text-sm font-semibold">Reset Mission</button>
+
+                                    <!-- Data Source, Env Factors, etc. will be dynamically numbered -->
+                                    <div id="mission-setup-container" class="space-y-4">
+                                        <!-- Content will be added here via JS -->
+                                    </div>
+
+                                    <div id="mission-live-view" class="hidden space-y-4">
+                                        <div class="p-4 bg-slate-50 rounded-lg border">
+                                            <h2 class="font-semibold text-gray-700 mb-2">Live Simulation</h2>
+                                             <div class="flex items-center justify-between">
+                                                 <div class="text-sm font-medium text-gray-700">Elapsed Time: <span id="timeline-value" class="font-bold">0</span> mins</div>
+                                                 <button id="play-pause-btn" class="p-2 rounded-full bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed" disabled>
+                                                     <svg id="play-icon" xmlns="http://www.w3.org/2000/svg" width="20" height="20" fill="currentColor" viewBox="0 0 16 16"><path d="m11.596 8.697-6.363 3.692c-.54.313-1.233-.066-1.233-.697V4.308c0-.63.692-1.01 1.233-.696l6.363 3.692a.802.802 0 0 1 0 1.393z"/></svg>
+                                                     <svg id="pause-icon" xmlns="http://www.w3.org/2000/svg" width="20" height="20" fill="currentColor" class="hidden" viewBox="0 0 16 16"><path d="M5.5 3.5A1.5 1.5 0 0 1 7 5v6a1.5 1.5 0 0 1-3 0V5a1.5 1.5 0 0 1 1.5-1.5zm5 0A1.5 1.5 0 0 1 12 5v6a1.5 1.5 0 0 1-3 0V5a1.5 1.5 0 0 1 1.5-1.5z"/></svg>
+                                                 </button>
+                                             </div>
+                                            <div id="live-aqi-display" class="text-center my-3"></div>
+                                        </div>
+                                    </div>
+
+                                     <div class="p-4 bg-slate-50 rounded-lg border">
+                                         <h2 class="font-semibold text-gray-700 mb-2">Live Event Log</h2>
+                                         <div id="simulation-log" class="text-xs space-y-1 h-40 overflow-y-auto bg-gray-800 text-white p-2 rounded-md font-mono"></div>
+                                     </div>
+                                </div>
+
+                                <!-- Analysis Tab Content -->
+                                <div id="tab-content-analysis" class="p-4 space-y-4 hidden">
+                                    <div id="analysis-placeholder" class="text-center py-10 text-gray-500">
+                                        <p>Define a route or area to see the analysis.</p>
+                                    </div>
+                                    <div id="analysis-content" class="hidden space-y-4">
+                                        <div class="p-4 bg-slate-50 rounded-lg border">
+                                            <h2 class="font-semibold text-gray-700 mb-2">Deployment Analysis</h2>
+                                            <div id="deployment-summary"></div>
+                                        </div>
+                                        <div class="p-4 bg-slate-50 rounded-lg border">
+                                            <h2 class="font-semibold text-gray-700 mb-2">Operational Impact</h2>
+                                            <div id="operational-summary"></div>
+                                        </div>
+                                        <div class="p-4 bg-slate-50 rounded-lg border">
+                                            <h2 class="font-semibold text-gray-700 mb-2">Financial Analysis</h2>
+                                            <div class="space-y-2 mb-3">
+                                                <div>
+                                                    <label for="cost-kwh" class="text-xs font-medium">Cost per kWh ($)</label>
+                                                    <input type="number" id="cost-kwh" value="0.12" step="0.01" class="w-full text-sm bg-white border border-gray-300 rounded-md p-1 mt-1">
+                                                </div>
+                                                <div>
+                                                    <label for="cost-op" class="text-xs font-medium">Operational Cost/hr/Unit ($)</label>
+                                                    <input type="number" id="cost-op" value="1.50" step="0.1" class="w-full text-sm bg-white border border-gray-300 rounded-md p-1 mt-1">
+                                                </div>
+                                            </div>
+                                             <div id="financial-summary"></div>
+                                        </div>
+                                        <div class="p-4 bg-slate-50 rounded-lg border text-center">
+                                            <h2 class="font-semibold text-gray-700 mb-1">Ideal Time-to-Clean Prediction</h2>
+                                            <p class="text-xs text-gray-500 mb-2">Prediction without wind or active pollution sources.</p>
+                                            <div id="time-prediction" class="text-3xl font-bold text-green-600 my-2"></div>
+                                        </div>
+                                        <div class="p-4 bg-slate-50 rounded-lg border">
+                                            <h2 class="font-semibold text-gray-700 mb-2">Predicted Pollutant Decay</h2>
+                                            <div class="h-64"><canvas id="prediction-chart"></canvas></div>
+                                        </div>
+                                         <div class="p-4 bg-slate-50 rounded-lg border">
+                                             <h2 class="font-semibold text-gray-700 mb-2">Selected Unit Details</h2>
+                                             <div id="unit-details-placeholder" class="text-center text-gray-500 text-sm py-4">Click a unit on the map to see its live local data.</div>
+                                             <div id="unit-details" class="hidden text-sm space-y-1"></div>
+                                         </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </aside>
+
+                        <!-- Map Area -->
+                        <main class="flex-grow relative">
+                            <div id="map"></div>
+                            <div id="loading-overlay" class="absolute inset-0 bg-white/70 backdrop-blur-sm z-50 flex flex-col items-center justify-center hidden">
+                                <div class="loader ease-linear rounded-full border-8 border-t-8 border-gray-200 h-24 w-24"></div>
+                                <p id="loading-text" class="mt-4 font-semibold text-gray-700"></p>
+                            </div>
+                        </main>
+                    </div>
+                </div>
+
+                <div id="tooltip"></div>
+            </div>
+        </main>
+    </div>
+
+    <script>
+        // --- Main App Script ---
+        const pm25Input = document.getElementById('pm25');
+        const pm10Input = document.getElementById('pm10');
+        const no2Input = document.getElementById('no2');
+        const vocInput = document.getElementById('voc');
+        const simDurationInput = document.getElementById('sim-duration');
+        const startBtn = document.getElementById('startBtn');
+        const resetBtn = document.getElementById('resetBtn');
+        const modelSelector = document.getElementById('model-selector');
+
+        const currentAqiEl = document.getElementById('current-aqi');
+        const aqiDisplayContainer = document.getElementById('aqi-display-container');
+        const aqiCategoryEl = document.getElementById('aqi-category');
+        const livePm25El = document.getElementById('live-pm25');
+        const livePm10El = document.getElementById('live-pm10');
+        const liveNo2El = document.getElementById('live-no2');
+        const liveVocEl = document.getElementById('live-voc');
+        const simTimeEl = document.getElementById('sim-time');
+
+        const modelViewBtn = document.getElementById('model-view-btn');
+        const dataViewBtn = document.getElementById('data-view-btn');
+        const coverageViewBtn = document.getElementById('coverage-view-btn');
+        const consumptionViewBtn = document.getElementById('consumption-view-btn');
+        const comparisonViewBtn = document.getElementById('comparison-view-btn');
+        const plannerViewBtn = document.getElementById('planner-view-btn');
+
+        const modelContainer = document.getElementById('model-container');
+        const chartContainer = document.getElementById('chart-container');
+        const coverageCalculatorContainer = document.getElementById('coverage-calculator-container');
+        const consumptionContainer = document.getElementById('consumption-container');
+        const comparisonContainer = document.getElementById('comparison-container');
+        const plannerContainer = document.getElementById('planner-container');
+
+        const tooltip = document.getElementById('tooltip');
+        
+        // --- Global State ---
+        let scene, camera, renderer, controls, raycaster, mouse;
+        let models = {}; // Object to hold all filter models
+        let activeModelName = 'Alvora';
+        let interactiveObjects = [];
+        let aqiChart, coverageBarChart, powerConsumptionChart;
+        let simulationInterval;
+        let isSimulating = false;
+        let timeElapsed = 0;
+        let currentValues = {};
+        let particleSystems = {};
+        
+        const componentInfo = {
+            "Alvora_Pre-Filter": { title: "Pre-Filter", desc: "Captures larger particles like dust and pollen.", efficiency: `~25% PM10` },
+            "Alvora_ESP": { title: "Electrostatic Precipitator", desc: "Uses high voltage to charge and collect fine particles.", efficiency: `~95% PM2.5` },
+            "Alvora_Algae Bio-Reactor": { title: "Algae Bio-Reactor", desc: "A living system where algae absorb CO2 and gaseous pollutants.", efficiency: `~70% NO₂` },
+            "Alvora_UV-C Chamber": { title: "UV-C Sterilization", desc: "UV-C light neutralizes airborne viruses and bacteria.", efficiency: `>99.9% Germs` },
+            "Alvora_Nano-Filter": { title: "Nano-Fiber Membrane", desc: "Final filtration stage capturing any remaining ultrafine particles.", efficiency: `100% PM2.5/PM10` },
+            "Alvora_Cyclonic Separator": { title: "Cyclonic Separator", desc: "Spins air to separate heavier particulates before filtration.", efficiency: `+15% PM efficiency` },
+            "Alvora_Fan": { title: "Vortex Fan", desc: "High-efficiency fan to circulate air through the system.", efficiency: `500-800 m³/hr` },
+            "Alvora_Control Unit": { title: "Smart Control Unit", desc: "The AI brain, optimizing performance based on real-time data.", efficiency: `Up to 40% Energy Savings` },
+            "Alvora_Nutrient Tank": { title: "Nutrient System", desc: "Automated nutrient supply for the bio-reactor.", efficiency: `Refill Every 6 months` },
+            "Alvora_Intake Ionizer": { title: "Intake Ionizer", desc: "Pre-charges incoming pollutants, increasing the capture rate of the ESP.", efficiency: `+10% ESP Efficiency` },
+            "Alvora_VOC Catalyst": { title: "VOC Catalyst", desc: "A catalytic converter that neutralizes Volatile Organic Compounds (VOCs).", efficiency: `Removes 99% of VOCs` },
+            "Alvora_Air Amplifier": { title: "Air Amplifier Outlet", desc: "Uses aerodynamic principles to amplify airflow, increasing clean air distribution.", efficiency: `+25% Coverage Area` },
+            "Alvora_Energy Enhancer": { title: "Energy Enhancer", desc: "Automatically boosts power when high pollution is detected.", efficiency: `+50% Airflow in High AQI` },
+            "Alvora_Energy Saver": { title: "Energy Saver", desc: "Recovers energy and reduces consumption during low pollution.", efficiency: `-30% Power in Low AQI` },
+            
+            "HEPA_Fan": { title: "Fan", desc: "Draws air through the filter media.", efficiency: "Varies by model" },
+            "HEPA_Filter": { title: "HEPA Filter", desc: "A dense, pleated fiber filter that traps 99.97% of 0.3-micron particles.", efficiency: "99.97% PM2.5" },
+            
+            "PlasmaIon_Ionizer": { title: "Ionization Needles", desc: "Release charged ions into the air, which attach to pollutants.", efficiency: "Charges particles" },
+            "PlasmaIon_Collector": { title: "Collector Plates", desc: "Electrostatically attract the charged particles out of the air.", efficiency: "~70% PM2.5" },
+
+            "Carbon_Fan": { title: "Fan", desc: "Pulls air through the carbon bed.", efficiency: "Varies by model" },
+            "Carbon_Bed": { title: "Activated Carbon Bed", desc: "Porous carbon granules absorb gas molecules and odors.", efficiency: "~85% NO₂/VOCs" }
+        };
+
+        const filterData = [
+            { name: "Alvora", eff_pm25: 1.00, eff_pm10: 1.00, eff_no2: 0.90, eff_voc: 0.99, cost_initial: 250, cost_maint: 40, cost_energy: 30, lifespan: "10+ years" },
+            { name: "HEPA", eff_pm25: 0.997, eff_pm10: 1.00, eff_no2: 0.05, eff_voc: 0.10, cost_initial: 150, cost_maint: 50, cost_energy: 30, lifespan: "1-2 years (filter)" },
+            { name: "PlasmaIon", eff_pm25: 0.70, eff_pm10: 0.60, eff_no2: 0.30, eff_voc: 0.40, cost_initial: 300, cost_maint: 20, cost_energy: 10, lifespan: "5+ years" },
+            { name: "ActivatedCarbon", eff_pm25: 0.10, eff_pm10: 0.10, eff_no2: 0.85, eff_voc: 0.90, cost_initial: 100, cost_maint: 80, cost_energy: 20, lifespan: "6-12 months (filter)" }
+        ];
+        const filterEfficiencies = {};
+        filterData.forEach(f => {
+            filterEfficiencies[f.name] = {
+                pm25: f.eff_pm25,
+                pm10: f.eff_pm10,
+                no2: f.eff_no2,
+                voc: f.eff_voc,
+            };
+        });
+
+        window.onload = () => {
+            init3D();
+            initializeCharts();
+            addEventListeners();
+            calculateAndRenderComparison();
+            resetSimulation();
+            // The new planner has its own init logic, which will be called when its tab is shown
+        };
+
+        function initializeCharts() {
+            const chartOptions = {
+                responsive: true,
+                maintainAspectRatio: false,
+                scales: {
+                    x: { ticks: { color: '#9ca3af' }, grid: { color: 'rgba(255,255,255,0.1)' } },
+                    y: { ticks: { color: '#9ca3af' }, grid: { color: 'rgba(255,255,255,0.1)' } }
+                },
+                plugins: { legend: { labels: { color: '#e5e7eb' } } }
+            };
+
+            if (aqiChart) aqiChart.destroy();
+            aqiChart = new Chart(document.getElementById('aqiChart').getContext('2d'), {
+                type: 'line', data: { labels: [], datasets: [ { label: 'AQI', data: [], borderColor: '#4ade80', tension: 0.1 }, { label: 'PM2.5', data: [], borderColor: '#facc15', tension: 0.1 }, { label: 'PM10', data: [], borderColor: '#f97316', tension: 0.1 }, { label: 'NO₂', data: [], borderColor: '#60a5fa', tension: 0.1 }, { label: 'VOCs', data: [], borderColor: '#a78bfa', tension: 0.1 } ] }, options: chartOptions
+            });
+
+            if (coverageBarChart) coverageBarChart.destroy();
+            coverageBarChart = new Chart(document.getElementById('coverageBarChart').getContext('2d'), {
+                type: 'bar', data: { labels: ['Target AQI', 'Units Required'], datasets: [{ label: 'Value', data: [150, 0], backgroundColor: ['#f97316', '#3b82f6'] }] }, options: { ...chartOptions, indexAxis: 'y' }
+            });
+            
+            if (powerConsumptionChart) powerConsumptionChart.destroy();
+            powerConsumptionChart = new Chart(document.getElementById('powerConsumptionChart').getContext('2d'), {
+                type: 'line', data: { labels: [], datasets: [{ label: 'Power (Watts)', data: [], borderColor: '#8b5cf6', tension: 0.1, fill: true, backgroundColor: 'rgba(139, 92, 246, 0.2)' }] }, options: chartOptions
+            });
+        }
+        
+        function switchTab(activeContainer, activeBtn) {
+            const allContainers = [modelContainer, chartContainer, coverageCalculatorContainer, consumptionContainer, comparisonContainer, plannerContainer];
+            const allTabBtns = [modelViewBtn, dataViewBtn, coverageViewBtn, consumptionViewBtn, comparisonViewBtn, plannerViewBtn];
+
+            allContainers.forEach(container => container.classList.add('hidden'));
+            allTabBtns.forEach(btn => btn.classList.remove('active'));
+
+            activeContainer.classList.remove('hidden');
+            activeBtn.classList.add('active');
+            
+            if (activeContainer === plannerContainer && !window.plannerInitialized) {
+                // Initialize the new planner script only when its tab is first opened
+                window.plannerInitialized = true;
+                initializePlanner();
+            } else if (activeContainer === plannerContainer) {
+                // Invalidate map size on subsequent views
+                if(window.AppState && window.AppState.map) {
+                    setTimeout(() => window.AppState.map.invalidateSize(), 10);
+                }
+            }
+            
+            setTimeout(() => onWindowResize(), 50);
+        }
+
+        function addEventListeners() {
+            startBtn.addEventListener('click', startSimulation);
+            resetBtn.addEventListener('click', resetSimulation);
+            
+            modelViewBtn.addEventListener('click', () => switchTab(modelContainer, modelViewBtn));
+            dataViewBtn.addEventListener('click', () => switchTab(chartContainer, dataViewBtn));
+            comparisonViewBtn.addEventListener('click', () => switchTab(comparisonContainer, comparisonViewBtn));
+            coverageViewBtn.addEventListener('click', () => switchTab(coverageCalculatorContainer, coverageViewBtn));
+            consumptionViewBtn.addEventListener('click', () => switchTab(consumptionContainer, consumptionViewBtn));
+            plannerViewBtn.addEventListener('click', () => switchTab(plannerContainer, plannerViewBtn));
+            
+            modelSelector.addEventListener('change', (e) => switchModel(e.target.value));
+            document.getElementById('run-comparison').addEventListener('click', calculateAndRenderComparison);
+            
+            document.getElementById('calculate-coverage-btn').addEventListener('click', calculateCoverage);
+            
+            window.addEventListener('resize', onWindowResize);
+        }
+
+        function onWindowResize() {
+            if (camera && renderer && modelContainer.offsetParent !== null) {
+                const { clientWidth, clientHeight } = modelContainer;
+                if (clientWidth > 0 && clientHeight > 0) {
+                    camera.aspect = clientWidth / clientHeight;
+                    camera.updateProjectionMatrix();
+                    renderer.setSize(clientWidth, clientHeight);
+                }
+            }
+            if (window.AppState && window.AppState.map && plannerContainer.offsetParent !== null) {
+                 window.AppState.map.invalidateSize();
+            }
+        }
+        
+        // --- All other main app functions (init3D, animateParticles, etc.) remain the same as the previous version ---
+        function init3D() {
+            scene = new THREE.Scene();
+            camera = new THREE.PerspectiveCamera(75, modelContainer.clientWidth / modelContainer.clientHeight, 0.1, 1000);
+            camera.position.set(4, 4, 7);
+            renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+            renderer.setPixelRatio(window.devicePixelRatio);
+            renderer.setSize(modelContainer.clientWidth, modelContainer.clientHeight);
+            modelContainer.appendChild(renderer.domElement);
+            controls = new THREE.OrbitControls(camera, renderer.domElement);
+            controls.enableDamping = true;
+            
+            const ambientLight = new THREE.AmbientLight(0xffffff, 0.7);
+            scene.add(ambientLight);
+            const keyLight = new THREE.DirectionalLight(0xffffff, 0.8);
+            keyLight.position.set(-5, 5, 5);
+            scene.add(keyLight);
+
+            raycaster = new THREE.Raycaster();
+            mouse = new THREE.Vector2();
+            
+            createAllModels();
+            switchModel('Alvora'); // Start with Alvora model
+            createParticleSystems();
+            animate();
+            modelContainer.addEventListener('mousemove', onMouseMove, false);
+            modelContainer.addEventListener('mousedown', () => { modelContainer.style.cursor = 'grabbing'; });
+            modelContainer.addEventListener('mouseup', () => { modelContainer.style.cursor = 'grab'; });
+        }
+
+        function onMouseMove(event) {
+            const rect = renderer.domElement.getBoundingClientRect();
+            mouse.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
+            mouse.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
+            
+            tooltip.style.left = `${event.clientX}px`;
+            tooltip.style.top = `${event.clientY}px`;
+        }
+
+        function createAllModels() {
+            models['Alvora'] = createAlvoraMechanismModel();
+            models['HEPA'] = createHepaModel();
+            models['PlasmaIon'] = createPlasmaIonModel();
+            models['ActivatedCarbon'] = createActivatedCarbonModel();
+
+            Object.values(models).forEach(modelGroup => {
+                modelGroup.visible = false;
+                scene.add(modelGroup);
+            });
+        }
+
+        function switchModel(modelName) {
+            if (models[activeModelName]) models[activeModelName].visible = false;
+            activeModelName = modelName;
+            if (models[activeModelName]) models[activeModelName].visible = true;
+            
+            interactiveObjects = [];
+            if (models[activeModelName]) {
+                models[activeModelName].traverse(child => {
+                    if (componentInfo[activeModelName + "_" + child.name] || (child.parent && componentInfo[activeModelName + "_" + child.parent.name])) {
+                        interactiveObjects.push(child);
+                    }
+                });
+            }
+        }
+        
+        function createAlvoraMechanismModel() {
+            const model = new THREE.Group();
+            const accentMaterial = new THREE.MeshPhysicalMaterial({ color: 0x3b82f6, metalness: 0.8, roughness: 0.2 });
+            const glassMaterial = new THREE.MeshPhysicalMaterial({ color: 0xffffff, metalness: 0, roughness: 0, transmission: 0.95, transparent: true, thickness: 0.5, ior: 1.52 });
+            const algaeMaterial = new THREE.MeshStandardMaterial({ color: 0x84cc16, emissive: 0x4ade80, emissiveIntensity: 0.8 });
+            const uvMaterial = new THREE.MeshBasicMaterial({ color: 0x8b5cf6, toneMapped: false, transparent: true, opacity: 0.3 });
+            const motherboardMaterial = new THREE.MeshBasicMaterial({ color: 0x166534 });
+            const metalMaterial = new THREE.MeshStandardMaterial({ color: 0x6b7280, metalness: 0.7, roughness: 0.3, side: THREE.DoubleSide });
+
+            const shellRadius = 1.6;
+            const shellHeight = 6;
+            
+            const shellGeometry = new THREE.CylinderGeometry(shellRadius, shellRadius, shellHeight, 32, 4, true);
+            const shellWireframe = new THREE.WireframeGeometry(shellGeometry);
+            const shell = new THREE.LineSegments(
+                shellWireframe,
+                new THREE.LineBasicMaterial({ color: 0x4b5563, transparent: true, opacity: 0.3 })
+            );
+            shell.position.y = shellHeight / 2;
+            model.add(shell);
+
+            const separator = new THREE.Mesh(new THREE.ConeGeometry(0.8, 1.0, 32), metalMaterial);
+            separator.position.y = 0.5;
+            separator.name = "Cyclonic Separator";
+            model.add(separator);
+
+            const preFilter = new THREE.Mesh(new THREE.CylinderGeometry(1.2, 1.2, 0.1, 64), new THREE.MeshStandardMaterial({color: 0x9ca3af, wireframe: true}));
+            preFilter.position.y = 1.2;
+            preFilter.name = "Pre-Filter";
+            model.add(preFilter);
+
+            const ionizer = new THREE.Mesh(new THREE.TorusGeometry(1.3, 0.05, 16, 100), new THREE.MeshBasicMaterial({ color: 0x67e8f9, wireframe: true }));
+            ionizer.rotation.x = Math.PI / 2;
+            ionizer.position.y = 1.4;
+            ionizer.name = "Intake Ionizer";
+            model.add(ionizer);
+
+            const espGroup = new THREE.Group();
+            espGroup.name = "ESP";
+            for (let i = 0; i < 8; i++) {
+                const plate = new THREE.Mesh(new THREE.PlaneGeometry(2.4, 0.8), metalMaterial);
+                plate.position.y = 1.8 + i * 0.12;
+                plate.rotation.x = Math.PI / 2;
+                plate.rotation.z = (i / 8) * Math.PI;
+                espGroup.add(plate);
+            }
+            model.add(espGroup);
+
+            const reactorGroup = new THREE.Group();
+            reactorGroup.name = "Algae Bio-Reactor";
+            const reactorTube = new THREE.Mesh(new THREE.CylinderGeometry(0.9, 0.9, 1.5, 64, 1, true), glassMaterial);
+            reactorGroup.add(reactorTube);
+            
+            class CustomSinCurve extends THREE.Curve {
+                constructor(scale = 1) { super(); this.scale = scale; }
+                getPoint(t) {
+                    const tx = Math.cos(2 * Math.PI * t * 4) * 0.7;
+                    const ty = (t * 1.4) - 0.7;
+                    const tz = Math.sin(2 * Math.PI * t * 4) * 0.7;
+                    return new THREE.Vector3(tx, ty, tz).multiplyScalar(this.scale);
+                }
+            }
+            const path = new CustomSinCurve(1);
+            const helix = new THREE.Mesh(new THREE.TubeGeometry(path, 128, 0.1, 8, false), algaeMaterial);
+            reactorGroup.add(helix);
+            reactorGroup.position.y = 3.5;
+            model.add(reactorGroup);
+
+            const catalyst = new THREE.Mesh(new THREE.OctahedronGeometry(0.5, 0), new THREE.MeshStandardMaterial({ color: 0x71717a, metalness: 0.9, roughness: 0.2 }));
+            catalyst.position.y = 4.5;
+            catalyst.name = "VOC Catalyst";
+            model.add(catalyst);
+            
+            const uvChamber = new THREE.Mesh(new THREE.CylinderGeometry(0.7, 0.7, 0.4, 64), uvMaterial);
+            uvChamber.position.y = 5.0;
+            uvChamber.name = "UV-C Chamber";
+            model.add(uvChamber);
+
+            const nanoFilter = new THREE.Mesh(new THREE.CylinderGeometry(1.0, 1.0, 0.05, 64), new THREE.MeshStandardMaterial({ color: 0xffffff, opacity: 0.7, transparent: true }));
+            nanoFilter.position.y = 5.3;
+            nanoFilter.name = "Nano-Filter";
+            model.add(nanoFilter);
+
+            const fan = new THREE.Group();
+            fan.name = "Fan";
+            for (let i = 0; i < 7; i++) {
+                const blade = new THREE.Mesh(new THREE.BoxGeometry(0.8, 0.04, 0.3), accentMaterial);
+                blade.rotation.x = -0.3;
+                blade.position.x = 0.4;
+                const bladeGroup = new THREE.Group();
+                bladeGroup.add(blade);
+                bladeGroup.rotation.y = (i / 7) * Math.PI * 2;
+                fan.add(bladeGroup);
+            }
+            fan.position.y = 5.6;
+            model.add(fan);
+            model.fan = fan;
+
+            const amplifier = new THREE.Mesh(new THREE.TorusGeometry(1.0, 0.1, 16, 100, Math.PI * 1.5), accentMaterial);
+            amplifier.position.y = 5.95;
+            amplifier.rotation.x = Math.PI / 2;
+            amplifier.rotation.z = Math.PI * 1.25;
+            amplifier.name = "Air Amplifier";
+            model.add(amplifier);
+
+            const sideComponentGroup = new THREE.Group();
+            sideComponentGroup.position.x = 1.1;
+
+            const motherboardGroup = new THREE.Group();
+            motherboardGroup.name = "Control Unit";
+            const motherboard = new THREE.Mesh(new THREE.BoxGeometry(0.4, 0.6, 0.1), motherboardMaterial);
+            const chip1 = new THREE.Mesh(new THREE.BoxGeometry(0.15, 0.15, 0.08), new THREE.MeshBasicMaterial({color: 0x000000}));
+            chip1.position.set(0, 0.1, 0.05);
+            motherboard.add(chip1);
+            const chip2 = new THREE.Mesh(new THREE.BoxGeometry(0.1, 0.2, 0.08), new THREE.MeshBasicMaterial({color: 0x000000}));
+            chip2.position.set(0, -0.15, 0.05);
+            motherboard.add(chip2);
+            motherboardGroup.add(motherboard);
+            motherboardGroup.position.y = 3.5;
+            sideComponentGroup.add(motherboardGroup);
+
+            const tank = new THREE.Mesh(new THREE.CylinderGeometry(0.2, 0.2, 0.5, 16), glassMaterial);
+            tank.position.y = 2.8;
+            tank.name = "Nutrient Tank";
+            sideComponentGroup.add(tank);
+
+            const energyEnhancer = new THREE.Mesh(new THREE.SphereGeometry(0.2, 16, 16), new THREE.MeshBasicMaterial({ color: 0x3b82f6, transparent: true, opacity: 0.5 }));
+            energyEnhancer.position.y = 4.2;
+            energyEnhancer.name = "Energy Enhancer";
+            sideComponentGroup.add(energyEnhancer);
+            model.energyEnhancer = energyEnhancer;
+            
+            const energySaver = new THREE.Mesh(new THREE.IcosahedronGeometry(0.2, 0), new THREE.MeshStandardMaterial({ color: 0x0ea5e9, emissive: 0x0ea5e9, emissiveIntensity: 0 }));
+            energySaver.position.y = 2.2;
+            energySaver.name = "Energy Saver";
+            sideComponentGroup.add(energySaver);
+            model.energySaver = energySaver;
+
+            model.add(sideComponentGroup);
+            
+            return model;
+        }
+
+        function createHepaModel() {
+            const group = new THREE.Group();
+            group.position.y = -1;
+            const shell = new THREE.Mesh(new THREE.BoxGeometry(4, 5, 2.5), new THREE.MeshStandardMaterial({color: 0x4b5563, transparent: true, opacity: 0.1, side: THREE.DoubleSide}));
+            shell.position.y = 2.5;
+            group.add(shell);
+
+            const fan = new THREE.Group();
+            fan.name = "Fan";
+            for(let i=0; i<7; i++) {
+                const bladeGeo = new THREE.CylinderGeometry(0.1, 0.1, 1.5, 8);
+                const bladeMat = new THREE.MeshStandardMaterial({color: 0x374151, metalness: 0.5, roughness: 0.5});
+                const blade = new THREE.Mesh(bladeGeo, bladeMat);
+                blade.scale.z = 0.2;
+                blade.rotation.x = Math.PI / 2;
+                blade.rotation.y = Math.PI / 4;
+                blade.position.z = 0.75 * Math.cos(i/7 * Math.PI*2);
+                blade.position.y = 0.75 * Math.sin(i/7 * Math.PI*2);
+                fan.add(blade);
+            }
+            fan.position.set(0, 4, 0);
+            group.add(fan);
+            models.HEPA_fan = fan;
+
+            const hepaFilter = new THREE.Group();
+            hepaFilter.name = "Filter";
+            
+            const frameMat = new THREE.MeshStandardMaterial({color: 0x6b7280});
+            const frameTop = new THREE.Mesh(new THREE.BoxGeometry(3.7, 0.2, 0.7), frameMat);
+            frameTop.position.y = 1.25;
+            hepaFilter.add(frameTop);
+            const frameBottom = frameTop.clone();
+            frameBottom.position.y = -1.25;
+            hepaFilter.add(frameBottom);
+            const frameLeft = new THREE.Mesh(new THREE.BoxGeometry(0.2, 2.7, 0.7), frameMat);
+            frameLeft.position.x = -1.75;
+            hepaFilter.add(frameLeft);
+            const frameRight = frameLeft.clone();
+            frameRight.position.x = 1.75;
+            hepaFilter.add(frameRight);
+
+            const pleatCount = 40;
+            const pleatWidth = 3.5;
+            const pleatHeight = 2.5;
+            const pleatDepth = 0.5;
+            const pleatMaterial = new THREE.MeshStandardMaterial({color: 0xf3f4f6, side: THREE.DoubleSide});
+            for(let i=0; i < pleatCount; i++) {
+                const shape = new THREE.Shape();
+                shape.moveTo(0, 0);
+                shape.lineTo(pleatDepth / 2, pleatHeight);
+                shape.lineTo(pleatDepth, 0);
+                const extrudeSettings = { depth: pleatWidth / pleatCount, bevelEnabled: false };
+                const geometry = new THREE.ExtrudeGeometry(shape, extrudeSettings);
+                const mesh = new THREE.Mesh(geometry, pleatMaterial);
+                mesh.position.set(-pleatWidth / 2 + i * (pleatWidth / pleatCount), -pleatHeight / 2, -pleatDepth / 2);
+                hepaFilter.add(mesh);
+            }
+            hepaFilter.position.y = 2;
+            group.add(hepaFilter);
+
+            return group;
+        }
+
+        function createPlasmaIonModel() {
+            const group = new THREE.Group();
+            group.position.y = -1;
+            const shell = new THREE.Mesh(new THREE.CylinderGeometry(2, 2, 5, 32, 1, true), new THREE.MeshStandardMaterial({color: 0x4b5563, transparent: true, opacity: 0.1, side: THREE.DoubleSide}));
+            shell.position.y = 2.5;
+            group.add(shell);
+
+            const ionizer = new THREE.Group();
+            ionizer.name = "Ionizer";
+            const needleMat = new THREE.MeshStandardMaterial({color: 0x67e8f9, emissive: 0x67e8f9, emissiveIntensity: 0.5});
+            for(let i=0; i<12; i++) {
+                const needle = new THREE.Mesh(new THREE.ConeGeometry(0.02, 0.5, 8), needleMat);
+                needle.position.set(Math.cos(i/12 * Math.PI*2) * 1.5, 1, Math.sin(i/12 * Math.PI*2) * 1.5);
+                ionizer.add(needle);
+            }
+            group.add(ionizer);
+
+            const collector = new THREE.Group();
+            collector.name = "Collector";
+            const plateMatPositive = new THREE.MeshStandardMaterial({color: 0x9ca3af, metalness: 0.8, roughness: 0.2, side: THREE.DoubleSide});
+            const plateMatNegative = new THREE.MeshStandardMaterial({color: 0x4b5563, metalness: 0.8, roughness: 0.2, side: THREE.DoubleSide});
+            for(let i=0; i<12; i++) {
+                const plate = new THREE.Mesh(new THREE.PlaneGeometry(3, 2), i % 2 === 0 ? plateMatPositive : plateMatNegative);
+                plate.position.y = 3;
+                plate.rotation.x = Math.PI/2;
+                plate.rotation.z = (i/12) * Math.PI;
+                collector.add(plate);
+            }
+            group.add(collector);
+
+            // Add some electrical particles for effect
+            const elecGeom = new THREE.BufferGeometry();
+            const elecPos = [];
+            for(let i=0; i<50; i++) { elecPos.push( (Math.random()-0.5)*3, 1 + (Math.random()-0.5)*0.5, (Math.random()-0.5)*3 ); }
+            elecGeom.setAttribute('position', new THREE.Float32BufferAttribute(elecPos, 3));
+            const elecMat = new THREE.PointsMaterial({color: 0x818cf8, size: 0.05, transparent: true, opacity: 0.7});
+            const electricalParticles = new THREE.Points(elecGeom, elecMat);
+            ionizer.add(electricalParticles);
+            models.PlasmaIon_effects = electricalParticles;
+
+            return group;
+        }
+
+        function createActivatedCarbonModel() {
+            const group = new THREE.Group();
+            group.position.y = -0.5;
+            const shell = new THREE.Mesh(new THREE.CylinderGeometry(2, 2, 4, 32, 1, true), new THREE.MeshStandardMaterial({color: 0x374151, transparent: true, opacity: 0.1, side: THREE.DoubleSide}));
+            shell.position.y = 2;
+            group.add(shell);
+
+            const fan = new THREE.Group();
+            fan.name = "Fan";
+            for(let i=0; i<5; i++) {
+                const blade = new THREE.Mesh(new THREE.BoxGeometry(1.5, 0.1, 0.4), new THREE.MeshStandardMaterial({color: 0x1f2937}));
+                blade.rotation.y = (i/5) * Math.PI * 2;
+                fan.add(blade);
+            }
+            fan.position.set(0, 3.5, 0);
+            group.add(fan);
+            models.Carbon_fan = fan;
+
+            const carbonBed = new THREE.Group();
+            carbonBed.name = "Bed";
+            const bedGeo = new THREE.CylinderGeometry(1.8, 1.8, 2, 32);
+            const bedMesh = new THREE.Mesh(bedGeo, new THREE.MeshStandardMaterial({color: 0x111827, transparent: true, opacity: 0.5}));
+            carbonBed.add(bedMesh);
+            
+            const carbonPoints = [];
+            for(let i=0; i<2000; i++) {
+                const angle = Math.random() * Math.PI * 2;
+                const radius = Math.random() * 1.75;
+                const x = Math.cos(angle) * radius;
+                const y = (Math.random() - 0.5) * 1.9;
+                const z = Math.sin(angle) * radius;
+                carbonPoints.push(x, y, z);
+            }
+            const carbonGeo = new THREE.BufferGeometry();
+            carbonGeo.setAttribute('position', new THREE.Float32BufferAttribute(carbonPoints, 3));
+            const carbonMaterial = new THREE.PointsMaterial({color: 0x4b5563, size: 0.05, sizeAttenuation: true});
+            const carbonParticles = new THREE.Points(carbonGeo, carbonMaterial);
+            carbonBed.add(carbonParticles);
+            carbonBed.position.y = 1.5;
+            group.add(carbonBed);
+            
+            return group;
+        }
+        
+        function animate() {
+            requestAnimationFrame(animate);
+            controls.update();
+            checkIntersections();
+            
+            if (isSimulating) {
+                if (models.Alvora && models.Alvora.visible) {
+                    let fanSpeed = 0.15;
+                    const aqi = calculateAQI(currentValues.pm25, currentValues.pm10, currentValues.no2);
+                    if (aqi > 200) fanSpeed = 0.3; else if (aqi < 100) fanSpeed = 0.05;
+                    if (models.Alvora.fan) models.Alvora.fan.rotation.y += fanSpeed;
+                    if (models.Alvora.energyEnhancer) models.Alvora.energyEnhancer.material.opacity = aqi > 200 ? 0.5 + Math.sin(Date.now() * 0.01) * 0.5 : 0.5;
+                    if (models.Alvora.energySaver) models.Alvora.energySaver.material.emissiveIntensity = aqi < 100 ? Math.sin(Date.now() * 0.005) * 0.5 + 0.5 : 0;
+                } else if (models.HEPA_fan && models.HEPA_fan.visible) {
+                    models.HEPA_fan.rotation.z += 0.1;
+                } else if (models.Carbon_fan && models.Carbon_fan.visible) {
+                    models.Carbon_fan.rotation.y += 0.1;
+                }
+                if(models.PlasmaIon_effects && models.PlasmaIon_effects.visible) {
+                    models.PlasmaIon_effects.rotation.y += 0.01;
+                }
+                animateParticles();
+            }
+            renderer.render(scene, camera);
+        }
+
+        function checkIntersections() {
+            raycaster.setFromCamera(mouse, camera);
+            const intersects = raycaster.intersectObjects(interactiveObjects, true);
+
+            if (intersects.length > 0) {
+                let obj = intersects[0].object;
+                let info = null;
+                // Traverse up the hierarchy to find a named parent
+                while(obj) {
+                    const fullName = activeModelName + "_" + obj.name;
+                    if (componentInfo[fullName]) {
+                        info = componentInfo[fullName];
+                        break;
+                    }
+                    obj = obj.parent;
+                }
+
+                if (info) {
+                    tooltip.innerHTML = `<h3>${info.title}</h3><p>${info.desc}</p><span class="efficiency">${info.efficiency}</span>`;
+                    tooltip.classList.add('visible');
+                } else {
+                    tooltip.classList.remove('visible');
+                }
+            } else {
+                tooltip.classList.remove('visible');
+            }
+        }
+        
+        function createParticleSystems() {
+            createParticleSystem('pm25', 100, 0xfacc15, 0.05);
+            createParticleSystem('pm10', 50, 0xf97316, 0.08);
+            createParticleSystem('no2', 70, 0x60a5fa, 0.06);
+            createParticleSystem('voc', 80, 0xffffff, 0.04);
+            createParticleSystem('clean_air', 100, 0x22c55e, 0.05);
+        }
+
+        function createParticleSystem(name, count, color, size) {
+            const geometry = new THREE.BufferGeometry();
+            const positions = new Float32Array(count * 3);
+            const velocities = new Float32Array(count * 3);
+            const states = new Float32Array(count); // 0: inactive, 1: active
+            for (let i = 0; i < count; i++) { states[i] = 0; }
+            geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+            const material = new THREE.PointsMaterial({ color, size, transparent: true, opacity: 0.8 });
+            const points = new THREE.Points(geometry, material);
+            particleSystems[name] = { points, positions, velocities, states, count };
+            scene.add(points);
+        }
+
+        function animateParticles() {
+            const aqi = calculateAQI(currentValues.pm25, currentValues.pm10, currentValues.no2);
+            const spawnRate = aqi > 200 ? 0.02 : (aqi < 100 ? 0.005 : 0.01);
+            
+            Object.keys(particleSystems).forEach(name => {
+                if (name === 'clean_air') return;
+                for (let i = 0; i < particleSystems[name].count; i++) {
+                    if (particleSystems[name].states[i] === 0 && Math.random() < spawnRate) {
+                        spawnParticle(name, i);
+                    }
+                }
+            });
+
+            Object.keys(particleSystems).forEach(name => {
+                const { points, positions, velocities, states } = particleSystems[name];
+                const efficiency = filterEfficiencies[activeModelName];
+                
+                for (let i = 0; i < particleSystems[name].count; i++) {
+                    if (states[i] === 1) {
+                        // Apply suction force towards the center axis
+                        if (name !== 'clean_air' && positions[i*3+1] < 5.5) { // Only apply to pollutants below the fan
+                           velocities[i * 3] -= positions[i * 3] * 0.002;
+                           velocities[i * 3 + 2] -= positions[i * 3 + 2] * 0.002;
+                        }
+
+                        positions[i * 3] += velocities[i * 3];
+                        positions[i * 3 + 1] += velocities[i * 3 + 1];
+                        positions[i * 3 + 2] += velocities[i * 3 + 2];
+
+                        const y = positions[i * 3 + 1];
+                        let removed = false;
+                        let removalChance = 0;
+
+                        if (name !== 'clean_air') {
+                            switch (activeModelName) {
+                                case 'Alvora':
+                                    if (name === 'pm10' && y > 1.1 && y < 1.3 && Math.random() < 0.25) removed = true;
+                                    else if (name === 'pm25' && y > 1.7 && y < 2.7 && Math.random() < 0.95) removed = true;
+                                    else if (name === 'no2' && y > 3.0 && y < 4.0 && Math.random() < 0.70) removed = true;
+                                    else if (name === 'voc' && y > 4.4 && y < 4.6 && Math.random() < 0.99) removed = true;
+                                    else if (y > 5.2 && y < 5.4) removed = true;
+                                    break;
+                                case 'HEPA':
+                                    if (y > 1.8 && y < 2.2) {
+                                        if (name === 'pm25') removalChance = efficiency.pm25;
+                                        if (name === 'pm10') removalChance = efficiency.pm10;
+                                        if (Math.random() < removalChance) removed = true;
+                                    }
+                                    break;
+                                case 'PlasmaIon':
+                                    if (y > 2.5 && y < 3.5) {
+                                        if (name === 'pm25') removalChance = efficiency.pm25;
+                                        if (name === 'pm10') removalChance = efficiency.pm10;
+                                        if (Math.random() < removalChance) removed = true;
+                                    }
+                                    break;
+                                case 'ActivatedCarbon':
+                                    if (y > 1.0 && y < 2.0) {
+                                        if (name === 'no2') removalChance = efficiency.no2;
+                                        if (name === 'voc') removalChance = efficiency.voc;
+                                        if (Math.random() < removalChance) removed = true;
+                                    }
+                                    break;
+                            }
+                        }
+
+                        if (removed) {
+                            states[i] = 0;
+                            const cleanAirSystem = particleSystems.clean_air;
+                            const availableIndex = Array.from(cleanAirSystem.states).findIndex(s => s === 0);
+                            if (availableIndex !== -1) spawnParticle('clean_air', availableIndex);
+                        }
+                        if (y > 7 || y < -1) states[i] = 0; // De-spawn if it goes too far
+                    }
+                }
+                points.geometry.attributes.position.needsUpdate = true;
+            });
+        }
+
+        function spawnParticle(name, i) {
+            const { positions, velocities, states } = particleSystems[name];
+            states[i] = 1;
+            
+            if (name === 'clean_air') {
+                let exhaustY = 6.0; // Default for Alvora
+                let exhaustRadius = 0.5;
+                if (activeModelName === 'HEPA') {
+                    exhaustY = 4.5;
+                    exhaustRadius = 1.5;
+                } else if (activeModelName === 'PlasmaIon' || activeModelName === 'ActivatedCarbon') {
+                    exhaustY = 4.0;
+                    exhaustRadius = 1.5;
+                }
+                const angle = Math.random() * Math.PI * 2;
+                positions[i * 3] = Math.cos(angle) * exhaustRadius * Math.random();
+                positions[i * 3 + 1] = exhaustY;
+                positions[i * 3 + 2] = Math.sin(angle) * exhaustRadius * Math.random();
+
+                velocities[i * 3] = (Math.random() - 0.5) * 0.02;
+                velocities[i * 3 + 1] = 0.05 + Math.random() * 0.02; // Strong upward push
+                velocities[i * 3 + 2] = (Math.random() - 0.5) * 0.02;
+
+            } else { // Pollutants
+                const radius = 1.5; // Spawn closer to the intake
+                const angle = Math.random() * Math.PI * 2;
+                let yPos = -0.5; // Spawn below the models
+                
+                positions[i * 3] = Math.cos(angle) * radius;
+                positions[i * 3 + 1] = yPos;
+                positions[i * 3 + 2] = Math.sin(angle) * radius;
+
+                // Initial velocity should point towards the intake area
+                const intakePoint = new THREE.Vector3(0, yPos + 1, 0); // Target the center above their spawn point
+                const currentPos = new THREE.Vector3(positions[i*3], positions[i*3+1], positions[i*3+2]);
+                const direction = intakePoint.sub(currentPos).normalize().multiplyScalar(0.02);
+
+                velocities[i * 3] = direction.x;
+                velocities[i * 3 + 1] = 0.02 + Math.random() * 0.01; // Gentle initial upward movement
+                velocities[i * 3 + 2] = direction.z;
+            }
+        }
+
+        function calculateAQI(pm25, pm10, no2) {
+            const pm25AQI = pm25 <= 12 ? (pm25/12)*50 : pm25 <= 35.4 ? 51 + ((pm25-12.1)/23.3)*49 : pm25 <= 55.4 ? 101 + ((pm25-35.5)/19.9)*49 : pm25 <= 150.4 ? 151 + ((pm25-55.5)/94.9)*49 : pm25 <= 250.4 ? 201 + ((pm25-150.5)/99.9)*99 : 300;
+            return Math.round(pm25AQI);
+        }
+
+        function getAqiInfo(aqi) {
+            if (aqi <= 50) return { category: 'Good', color: '#22c55e' };
+            if (aqi <= 100) return { category: 'Satisfactory', color: '#a3e635' };
+            if (aqi <= 200) return { category: 'Moderate', color: '#facc15' };
+            if (aqi <= 300) return { category: 'Poor', color: '#f97316' };
+            if (aqi <= 400) return { category: 'Very Poor', color: '#ef4444' };
+            return { category: 'Severe', color: '#b91c1c' };
+        }
+
+        function startSimulation() {
+            if (isSimulating) return;
+            clearInterval(simulationInterval);
+            isSimulating = true;
+            timeElapsed = 0;
+            currentValues = {
+                pm25: parseFloat(pm25Input.value),
+                pm10: parseFloat(pm10Input.value),
+                no2: parseFloat(no2Input.value),
+                voc: parseFloat(vocInput.value)
+            };
+            
+            initializeCharts();
+            
+            startBtn.disabled = true;
+            startBtn.textContent = "Simulating...";
+            resetBtn.disabled = true;
+            simulationInterval = setInterval(simulateStep, 1000);
+        }
+
+        function simulateStep() {
+            timeElapsed++;
+            let simulationDuration = parseInt(simDurationInput.value) || 60;
+            
+            const reductionRates = {
+                Alvora: { pm25: 0.98, pm10: 0.97, no2: 0.985, voc: 0.95 },
+                HEPA: { pm25: 0.985, pm10: 0.97, no2: 1, voc: 1 },
+                PlasmaIon: { pm25: 0.99, pm10: 0.985, no2: 0.998, voc: 0.998 },
+                ActivatedCarbon: { pm25: 1, pm10: 1, no2: 0.98, voc: 0.97 }
+            };
+            const rates = reductionRates[activeModelName];
+            currentValues.pm25 *= rates.pm25;
+            currentValues.pm10 *= rates.pm10;
+            currentValues.no2 *= rates.no2;
+            currentValues.voc *= rates.voc;
+
+            updateUI();
+            updateChart();
+            updateConsumption();
+
+            if (timeElapsed * 5 >= simulationDuration) {
+                clearInterval(simulationInterval);
+                isSimulating = false;
+                startBtn.textContent = "Simulation Complete";
+                resetBtn.disabled = false;
+            }
+        }
+
+        function resetSimulation() {
+            clearInterval(simulationInterval);
+            isSimulating = false;
+            timeElapsed = 0;
+            pm25Input.value = 185;
+            pm10Input.value = 250;
+            no2Input.value = 85;
+            vocInput.value = 500;
+            simDurationInput.value = 60;
+            currentValues = {};
+            updateUI();
+            initializeCharts();
+            updateConsumption(true);
+            Object.values(particleSystems).forEach(system => {
+                for (let i = 0; i < system.count; i++) { system.states[i] = 0; }
+                if(system.points.geometry.attributes.position) {
+                    system.points.geometry.attributes.position.needsUpdate = true;
+                }
+            });
+            startBtn.disabled = false;
+            resetBtn.disabled = false;
+            startBtn.textContent = "Start Simulation";
+        }
+
+        function updateUI() {
+            const hasValues = Object.keys(currentValues).length > 0;
+            const aqi = hasValues ? calculateAQI(currentValues.pm25, currentValues.pm10, currentValues.no2) : '...';
+            const aqiInfo = aqi !== '...' ? getAqiInfo(aqi) : { category: '...', color: '#9ca3af' };
+            
+            currentAqiEl.textContent = aqi;
+            aqiCategoryEl.textContent = aqiInfo.category;
+            aqiCategoryEl.style.color = aqiInfo.color;
+            aqiDisplayContainer.style.borderColor = aqiInfo.color;
+
+            livePm25El.textContent = `${hasValues ? currentValues.pm25.toFixed(1) : '...'} µg/m³`;
+            livePm10El.textContent = `${hasValues ? currentValues.pm10.toFixed(1) : '...'} µg/m³`;
+            liveNo2El.textContent = `${hasValues ? currentValues.no2.toFixed(1) : '...'} µg/m³`;
+            liveVocEl.textContent = `${hasValues ? currentValues.voc.toFixed(1) : '...'} ppb`;
+            simTimeEl.textContent = `${timeElapsed * 5} mins`;
+        }
+
+        function updateChart() {
+            if (!isSimulating) return;
+            const label = `${timeElapsed * 5}m`;
+            aqiChart.data.labels.push(label);
+            aqiChart.data.datasets[0].data.push(calculateAQI(currentValues.pm25, currentValues.pm10, currentValues.no2));
+            aqiChart.data.datasets[1].data.push(currentValues.pm25);
+            aqiChart.data.datasets[2].data.push(currentValues.pm10);
+            aqiChart.data.datasets[3].data.push(currentValues.no2);
+            aqiChart.data.datasets[4].data.push(currentValues.voc);
+            aqiChart.update('none');
+        }
+
+        function calculateCoverage() {
+            const area = parseFloat(document.getElementById('coverage-area').value) || 1;
+            const aqi = parseFloat(document.getElementById('coverage-aqi').value) || 345;
+            
+            const unitsNeeded = Math.ceil((area / 0.05) * (aqi / 150));
+            
+            document.getElementById('coverage-results-summary').innerHTML = `
+                <p>For an area of <strong class="text-white">${area} km²</strong> with an AQI of <strong class="text-white">${aqi}</strong>, you will need approximately:</p>
+                <p class="text-2xl font-bold text-green-400 text-center my-2">${unitsNeeded} Alvora Units</p>
+                <p>This ensures rapid reduction of pollutants to safe levels within 2 hours.</p>
+            `;
+            updateCoverageCharts(aqi, unitsNeeded);
+        }
+        
+        function updateCoverageCharts(aqi, units) {
+            coverageBarChart.data.datasets[0].data = [aqi, units];
+            coverageBarChart.update();
+        }
+
+        function updateConsumption(reset = false) {
+            const powerValueEl = document.getElementById('power-draw-value');
+            const powerModeEl = document.getElementById('power-mode');
+            const totalEnergyEl = document.getElementById('total-energy');
+            const totalWaterEl = document.getElementById('total-water');
+            const totalNutrientsEl = document.getElementById('total-nutrients');
+            
+            if (reset) {
+                powerValueEl.textContent = '0 W';
+                powerModeEl.textContent = 'Mode: Standby';
+                totalEnergyEl.textContent = '0.00 kWh';
+                totalWaterEl.textContent = '0.0 mL';
+                totalNutrientsEl.textContent = '0.0 mL';
+                if (powerConsumptionChart) {
+                    powerConsumptionChart.data.labels = [];
+                    powerConsumptionChart.data.datasets[0].data = [];
+                    powerConsumptionChart.update();
+                }
+                return;
+            }
+
+            if (!isSimulating) return;
+
+            const aqi = calculateAQI(currentValues.pm25, currentValues.pm10, currentValues.no2);
+            let powerDraw = 50; // Base power
+            let mode = 'Normal';
+            if (aqi > 200) { powerDraw = 120; mode = 'Boost'; }
+            else if (aqi < 100) { powerDraw = 25; mode = 'Eco'; }
+
+            powerValueEl.textContent = `${powerDraw} W`;
+            powerModeEl.textContent = `Mode: ${mode}`;
+
+            const totalEnergy = (parseFloat(totalEnergyEl.textContent) || 0) + (powerDraw * (5/3600));
+            const totalWater = (parseFloat(totalWaterEl.textContent) || 0) + (powerDraw / 50 * 0.1);
+            const totalNutrients = (parseFloat(totalNutrientsEl.textContent) || 0) + (powerDraw / 50 * 0.02);
+
+            totalEnergyEl.textContent = `${totalEnergy.toFixed(2)} kWh`;
+            totalWaterEl.textContent = `${totalWater.toFixed(1)} mL`;
+            totalNutrientsEl.textContent = `${totalNutrients.toFixed(1)} mL`;
+            
+            powerConsumptionChart.data.labels.push(`${timeElapsed * 5}m`);
+            powerConsumptionChart.data.datasets[0].data.push(powerDraw);
+            powerConsumptionChart.update('none');
+        }
+
+        function simulateImpact(minutes) {
+            const initialAqi = parseFloat(pm25Input.value);
+            if (isNaN(initialAqi)) {
+                document.getElementById('impact-results').textContent = 'Please set initial values first.';
+                return;
+            }
+            let projectedAqi = initialAqi;
+            for (let i=0; i < (minutes/5); i++) {
+                projectedAqi *= 0.98; // Using PM2.5 reduction rate
+            }
+            document.getElementById('impact-results').innerHTML = `After <strong>${minutes} minutes</strong>, PM2.5 is projected to drop from <strong>${initialAqi.toFixed(0)}</strong> to <strong class="text-green-400">${projectedAqi.toFixed(0)}</strong>.`;
+        }
+        
+        function calculateAndRenderComparison() {
+            const tableBody = document.getElementById('comparison-table-body');
+            const focusPollutant = document.getElementById('focus-pollutant').value;
+            const weights = { 'PM2.5': 0.5, 'PM10': 0.5, 'NO2': 0.5, 'VOCs': 0.5 };
+            weights[focusPollutant] = 2.0; // Heavily weight the selected pollutant
+            let maxScore = -Infinity, winnerName = '';
+
+            const processedData = filterData.map(item => {
+                const totalCost = item.cost_initial + (item.cost_maint * 10) + (item.cost_energy * 10);
+                const effectivenessScore = ((item.eff_pm25 * weights['PM2.5']) + (item.eff_pm10 * weights['PM10']) + (item.eff_no2 * weights['NO2']) + (item.eff_voc * weights['VOCs'])) * 100 - (totalCost / 10);
+                if (effectivenessScore > maxScore) { maxScore = effectivenessScore; winnerName = item.name; }
+                return { ...item, totalCost, effectivenessScore };
+            });
+
+            tableBody.innerHTML = '';
+            processedData.forEach(item => {
+                const row = document.createElement('tr');
+                row.className = `hover:bg-gray-800 transition-colors duration-200 ${item.name === 'Alvora' ? 'bg-green-900/20' : ''}`;
+                const isWinner = item.name === winnerName;
+                row.innerHTML = `
+                    <td class="px-6 py-4 font-semibold text-white whitespace-nowrap">${item.name}</td>
+                    <td class="px-6 py-4 text-center">${(item.eff_pm25 * 100).toFixed(1)}%</td>
+                    <td class="px-6 py-4 text-center">${(item.eff_pm10 * 100).toFixed(1)}%</td>
+                    <td class="px-6 py-4 text-center">${(item.eff_no2 * 100).toFixed(1)}%</td>
+                    <td class="px-6 py-4 text-center">$${item.cost_initial}</td>
+                    <td class="px-6 py-4 text-center">$${item.cost_maint}</td>
+                    <td class="px-6 py-4 text-center">$${item.cost_energy}</td>
+                    <td class="px-6 py-4 text-center">${item.lifespan}</td>
+                    <td class="px-6 py-4 text-center font-medium text-white">$${item.totalCost}</td>
+                    <td class="px-6 py-4 text-center font-bold text-lg ${item.effectivenessScore > 200 ? 'text-green-400' : 'text-yellow-400'}">${item.effectivenessScore.toFixed(2)}</td>
+                    <td class="px-6 py-4 text-center">${isWinner ? '<span class="winner-badge">Winner!</span>' : ''}</td>`;
+                tableBody.appendChild(row);
+            });
+        }
+    </script>
+    
+    <!-- New Planner Script -->
+    <script>
+    function initializePlanner() {
+        // --- CONFIGURATION ---
+        const CONFIG = {
+            api: {
+                waqiToken: 'demo',
+                nominatimUrl: 'https://nominatim.openstreetmap.org/reverse'
+            },
+            map: {
+                initialView: [28.4595, 77.0266], // Gurugram, India
+                initialZoom: 12,
+            },
+            unit: {
+                cadr: 800, 
+                filter_efficiency: { pm25: 0.995, pm10: 0.99, no2: 0.70, voc: 0.95 },
+                baseRadius: 75, 
+                effectiveHeight: 3,
+                power_consumption_watts: 150,
+                water_consumption_ml_per_hour: 20,
+                nutrient_consumption_ml_per_hour: 5,
+                maintenance_hours_per_work_unit: 0.01
+            },
+            simulation: {
+                targetAqi: 50,
+                tickInterval: 500, 
+                timePerTick: 1, 
+                pollutantMixRatio: { pm10_to_pm25: 1.5, no2_to_pm25: 0.4, voc_to_pm25: 0.8 },
+                wind_effect_multiplier: 0.005
+            },
+            unplaceableTypes: ['building', 'water', 'wetland', 'wood', 'forest', 'river', 'railway', 'motorway'],
+            pollutionSources: {
+                traffic: { pollutant: 'no2', emissionRate: 0.5 }, // µg/m³ per minute
+                industrial: { pollutant: 'pm25', emissionRate: 1.0 } // µg/m³ per minute
+            }
+        };
+
+        // --- APPLICATION STATE ---
+        const AppState = {
+            map: null,
+            routingControl: null,
+            startPoint: null,
+            endPoint: null,
+            areaBounds: null,
+            areaRectangle: null,
+            deployedUnits: [],
+            failedPlacements: [],
+            pollutionSources: [],
+            route: null,
+            simulation: {
+                isRunning: false,
+                intervalId: null,
+                elapsedTime: 0,
+                initialPollutants: null,
+            },
+            ui: {
+                mapClickState: 'idle',
+                predictionChart: null,
+                selectedUnit: null,
+                analysisMode: 'route' // 'route' or 'area'
+            },
+            environment: {
+                windSpeed: 5, // km/h
+                windDirection: 45 // degrees
+            }
+        };
+        window.AppState = AppState; // Make it accessible for onWindowResize
+
+        // --- DOM ELEMENTS ---
+        const DOMElements = {};
+        function cacheDOMElements() {
+            const ids = [
+                'set-start-btn', 'set-end-btn', 'instruction-text', 'reset-btn',
+                'mission-live-view', 'timeline-value', 'play-pause-btn', 'play-icon', 'pause-icon',
+                'live-aqi-display', 'simulation-log', 'map', 'loading-overlay', 'loading-text',
+                'tab-btn-mission', 'tab-btn-analysis', 'tab-content-mission', 'tab-content-analysis',
+                'analysis-placeholder', 'analysis-content', 'deployment-summary', 'operational-summary',
+                'financial-summary', 'time-prediction', 'prediction-chart',
+                'wind-speed', 'wind-speed-value', 'wind-direction', 'wind-direction-value',
+                'cost-kwh', 'cost-op', 'add-traffic-btn', 'add-industry-btn',
+                'unit-details-placeholder', 'unit-details', 'source-live', 'source-manual',
+                'manual-inputs-container', 'pm25-manual', 'pm10-manual', 'no2-manual', 'voc-manual',
+                'mode-route', 'mode-area', 'route-planner-container', 'area-planner-container',
+                'define-area-btn', 'mission-setup-container'
+            ];
+            ids.forEach(id => {
+                const el = document.getElementById(id);
+                if(el) DOMElements[id] = el;
+            });
+        }
+
+        // --- All other planner functions (DL_Model, UIManager, MapManager, AQI, Mission) go here ---
+        const DL_Model = {
+            predictCleanupTime(initialPollutants, numUnits) {
+                let currentPollutants = { ...initialPollutants };
+                let timeElapsed = 0;
+                const history = [{ time: 0, ...currentPollutants }];
+                let currentAqi = AQI.calculateAqiFromPollutants(currentPollutants);
+
+                const volumePerUnit = Math.PI * Math.pow(CONFIG.unit.baseRadius, 2) * CONFIG.unit.effectiveHeight;
+                const totalVolume = volumePerUnit * numUnits;
+                const totalCadrPerMinute = numUnits * (CONFIG.unit.cadr / 60);
+                const turnoversPerMinute = totalCadrPerMinute / totalVolume;
+
+                let timeTo25PercentImprovement = -1;
+                const initialAqi = AQI.calculateAqiFromPollutants(initialPollutants);
+                const targetAqiFor25Percent = initialAqi * 0.75;
+
+                while (currentAqi > CONFIG.simulation.targetAqi) {
+                    timeElapsed++;
+                    for (const pollutant in currentPollutants) {
+                        const pollutantRemovedFraction = turnoversPerMinute * CONFIG.unit.filter_efficiency[pollutant];
+                        currentPollutants[pollutant] *= (1 - pollutantRemovedFraction);
+                    }
+                    currentAqi = AQI.calculateAqiFromPollutants(currentPollutants);
+                    
+                    if (timeTo25PercentImprovement === -1 && currentAqi <= targetAqiFor25Percent) {
+                        timeTo25PercentImprovement = timeElapsed;
+                    }
+
+                    history.push({ time: timeElapsed, ...currentPollutants });
+                    if (timeElapsed > 5000) break; 
+                }
+                return { timeToTarget: timeElapsed, history, timeTo25PercentImprovement };
+            }
+        };
+
+        const UIManager = {
+            init() {
+                this.buildMissionSetupUI();
+                this.attachEventListeners();
+            },
+            attachEventListeners() {
+                DOMElements['tab-btn-mission'].addEventListener('click', () => this.switchTab('mission'));
+                DOMElements['tab-btn-analysis'].addEventListener('click', () => this.switchTab('analysis'));
+                DOMElements['mode-route'].addEventListener('change', () => this.setAnalysisMode('route'));
+                DOMElements['mode-area'].addEventListener('change', () => this.setAnalysisMode('area'));
+                DOMElements['source-live'].addEventListener('change', this.toggleManualInputs);
+                DOMElements['source-manual'].addEventListener('change', this.toggleManualInputs);
+                
+                DOMElements['wind-speed'].addEventListener('input', e => {
+                    AppState.environment.windSpeed = e.target.value;
+                    DOMElements['wind-speed-value'].textContent = e.target.value;
+                });
+                DOMElements['wind-direction'].addEventListener('input', e => {
+                    AppState.environment.windDirection = e.target.value;
+                    DOMElements['wind-direction-value'].textContent = e.target.value;
+                });
+            },
+            setAnalysisMode(mode) {
+                AppState.ui.analysisMode = mode;
+                DOMElements['route-planner-container'].classList.toggle('hidden', mode !== 'route');
+                DOMElements['area-planner-container'].classList.toggle('hidden', mode !== 'area');
+                Mission.reset();
+            },
+            buildMissionSetupUI() {
+                const container = DOMElements['mission-setup-container'];
+                container.innerHTML = `
+                    <div class="p-4 bg-slate-50 rounded-lg border">
+                        <h2 class="font-semibold text-gray-700 mb-3">3. Data Source</h2>
+                        <div class="flex items-center space-x-4">
+                            <label class="flex items-center space-x-2 cursor-pointer">
+                                <input type="radio" name="data-source" id="source-live" value="live" class="form-radio text-blue-600" checked>
+                                <span class="text-sm font-medium">Live AQI</span>
+                            </label>
+                            <label class="flex items-center space-x-2 cursor-pointer">
+                                <input type="radio" name="data-source" id="source-manual" value="manual" class="form-radio text-blue-600">
+                                <span class="text-sm font-medium">Manual Scenario</span>
+                            </label>
+                        </div>
+                        <div id="manual-inputs-container" class="hidden mt-4 space-y-2">
+                            <p class="text-xs text-gray-500">Define a custom high-pollution scenario.</p>
+                            <div><label for="pm25-manual" class="text-xs font-medium">PM2.5 (µg/m³)</label><input type="number" id="pm25-manual" value="155" class="w-full text-sm bg-white border border-gray-300 rounded-md p-1 mt-1"></div>
+                            <div><label for="pm10-manual" class="text-xs font-medium">PM10 (µg/m³)</label><input type="number" id="pm10-manual" value="254" class="w-full text-sm bg-white border border-gray-300 rounded-md p-1 mt-1"></div>
+                            <div><label for="no2-manual" class="text-xs font-medium">NO₂ (µg/m³)</label><input type="number" id="no2-manual" value="88" class="w-full text-sm bg-white border border-gray-300 rounded-md p-1 mt-1"></div>
+                            <div><label for="voc-manual" class="text-xs font-medium">VOCs (ppb)</label><input type="number" id="voc-manual" value="120" class="w-full text-sm bg-white border border-gray-300 rounded-md p-1 mt-1"></div>
+                        </div>
+                    </div>
+                    <div class="p-4 bg-slate-50 rounded-lg border">
+                        <h2 class="font-semibold text-gray-700 mb-3">4. Environmental Factors</h2>
+                        <div class="space-y-3">
+                            <div>
+                                <label for="wind-speed" class="block text-xs font-medium text-gray-600">Wind Speed (km/h): <span id="wind-speed-value">5</span></label>
+                                <input type="range" id="wind-speed" min="0" max="50" value="5" class="w-full h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer">
+                            </div>
+                            <div>
+                                <label for="wind-direction" class="block text-xs font-medium text-gray-600">Wind Direction (&deg;): <span id="wind-direction-value">45</span></label>
+                                <input type="range" id="wind-direction" min="0" max="360" value="45" class="w-full h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer">
+                            </div>
+                        </div>
+                    </div>
+                    <div class="p-4 bg-slate-50 rounded-lg border">
+                        <h2 class="font-semibold text-gray-700 mb-3">5. Add Pollution Sources</h2>
+                        <div class="grid grid-cols-2 gap-3">
+                            <button id="add-traffic-btn" class="w-full bg-yellow-500 text-white p-2 rounded-md hover:bg-yellow-600 text-sm font-semibold">Add Traffic</button>
+                            <button id="add-industry-btn" class="w-full bg-purple-600 text-white p-2 rounded-md hover:bg-purple-700 text-sm font-semibold">Add Industry</button>
+                        </div>
+                    </div>
+                `;
+                cacheDOMElements(); // Re-cache newly added elements
+            },
+            toggleManualInputs() {
+                const isManual = DOMElements['source-manual'].checked;
+                DOMElements['manual-inputs-container'].classList.toggle('hidden', !isManual);
+            },
+            switchTab(tabName) {
+                ['mission', 'analysis'].forEach(tab => {
+                    DOMElements[`tab-content-${tab}`].classList.toggle('hidden', tab !== tabName);
+                    const btn = DOMElements[`tab-btn-${tab}`];
+                    const isActive = tab === tabName;
+                    btn.classList.toggle('border-blue-500', isActive);
+                    btn.classList.toggle('text-blue-600', isActive);
+                    btn.classList.toggle('border-transparent', !isActive);
+                    btn.classList.toggle('text-gray-500', !isActive);
+                });
+            },
+            log(message, type = 'info') {
+                const entry = document.createElement('div');
+                entry.className = `log-entry log-${type}`;
+                entry.textContent = `[${new Date().toLocaleTimeString()}] ${message}`;
+                DOMElements['simulation-log'].appendChild(entry);
+                DOMElements['simulation-log'].scrollTop = DOMElements['simulation-log'].scrollHeight;
+            },
+            updateInstruction(text, isBlinking = false) {
+                DOMElements['instruction-text'].textContent = text;
+                DOMElements['instruction-text'].classList.toggle('blinking-text', isBlinking);
+            },
+            showLoading(isLoading, text = '') {
+                DOMElements['loading-overlay'].classList.toggle('hidden', !isLoading);
+                DOMElements['loading-text'].textContent = text;
+            },
+            resetUI() {
+                if (AppState.ui.analysisMode === 'route') {
+                    this.updateInstruction("Click 'Set Start', then click the map.", true);
+                    DOMElements['set-start-btn'].disabled = false;
+                    DOMElements['set-end-btn'].disabled = true;
+                } else {
+                    this.updateInstruction("Click 'Define Area' to begin.", true);
+                    DOMElements['define-area-btn'].disabled = false;
+                }
+                DOMElements['reset-btn'].classList.add('hidden');
+                DOMElements['play-pause-btn'].disabled = true;
+                DOMElements['play-icon'].classList.remove('hidden');
+                DOMElements['pause-icon'].classList.add('hidden');
+                DOMElements['timeline-value'].textContent = '0';
+                DOMElements['simulation-log'].innerHTML = '';
+                DOMElements['analysis-content'].classList.add('hidden');
+                DOMElements['analysis-placeholder'].classList.remove('hidden');
+                DOMElements['mission-live-view'].classList.add('hidden');
+                DOMElements['live-aqi-display'].innerHTML = '';
+                DOMElements['unit-details-placeholder'].classList.remove('hidden');
+                DOMElements['unit-details'].classList.add('hidden');
+                if (AppState.ui.predictionChart) {
+                    AppState.ui.predictionChart.destroy();
+                    AppState.ui.predictionChart = null;
+                }
+                this.switchTab('mission');
+            },
+            updatePlayPauseButton(isPlaying) {
+                DOMElements['play-icon'].classList.toggle('hidden', isPlaying);
+                DOMElements['pause-icon'].classList.toggle('hidden', !isPlaying);
+            },
+            displayAnalysis(prediction) {
+                DOMElements['analysis-placeholder'].classList.add('hidden');
+                DOMElements['analysis-content'].classList.remove('hidden');
+                
+                const initialPollutants = prediction.history[0];
+                const initialAqi = AQI.calculateAqiFromPollutants(initialPollutants);
+                const numUnits = AppState.deployedUnits.length;
+                const missionDurationHours = prediction.timeToTarget / 60;
+
+                const volumePerUnit = Math.PI * Math.pow(CONFIG.unit.baseRadius, 2) * CONFIG.unit.effectiveHeight;
+                const totalVolume = volumePerUnit * numUnits;
+                const totalCadrPerHour = numUnits * CONFIG.unit.cadr;
+                const turnoversPerHour = totalCadrPerHour / totalVolume;
+                const initialPm25MassMicrograms = initialPollutants.pm25 * totalVolume;
+                const pm25MassRemovedGrams = initialPm25MassMicrograms / 1e6;
+                
+                const costKwh = parseFloat(DOMElements['cost-kwh'].value) || 0;
+                const costOp = parseFloat(DOMElements['cost-op'].value) || 0;
+                const totalPowerKWh = (numUnits * CONFIG.unit.power_consumption_watts * missionDurationHours) / 1000;
+                const totalWaterLiters = (numUnits * CONFIG.unit.water_consumption_ml_per_hour * missionDurationHours) / 1000;
+                const totalNutrientsMl = numUnits * CONFIG.unit.nutrient_consumption_ml_per_hour * missionDurationHours;
+                const maintenanceImpact = numUnits * missionDurationHours * CONFIG.unit.maintenance_hours_per_work_unit;
+                const nextServiceDays = Math.max(1, 90 - (maintenanceImpact / 8));
+                const totalEnergyCost = totalPowerKWh * costKwh;
+                const totalOperationalCost = numUnits * costOp * missionDurationHours;
+                const totalMissionCost = totalEnergyCost + totalOperationalCost;
+                const costPerAqiPoint = (initialAqi - CONFIG.simulation.targetAqi > 0) ? totalMissionCost / (initialAqi - CONFIG.simulation.targetAqi) : 0;
+
+                let primaryMetricHTML = '';
+                if (AppState.ui.analysisMode === 'route') {
+                    primaryMetricHTML = `
+                        <span class="text-gray-500">Route Distance:</span>
+                        <span class="font-semibold text-right">${(AppState.route.summary.totalDistance / 1000).toFixed(2)} km</span>`;
+                } else {
+                   const areaKm2 = (AppState.areaBounds.getSouthWest().distanceTo(AppState.areaBounds.getNorthEast()) / 1000) * (AppState.areaBounds.getSouthEast().distanceTo(AppState.areaBounds.getNorthEast())/1000);
+                    primaryMetricHTML = `
+                        <span class="text-gray-500">Area Size:</span>
+                        <span class="font-semibold text-right">${areaKm2.toFixed(2)} km²</span>`;
+                }
+
+                DOMElements['deployment-summary'].innerHTML = `
+                    <div class="grid grid-cols-2 gap-x-4 gap-y-2 text-sm">
+                        ${primaryMetricHTML}
+                        <span class="text-gray-500">Initial Avg. AQI:</span>
+                        <span class="font-semibold text-right">${Math.round(initialAqi)}</span>
+                        
+                        <span class="text-gray-500">Units Deployed:</span>
+                        <span class="font-semibold text-right">${numUnits} (${AppState.failedPlacements.length} failed)</span>
+
+                        <span class="text-gray-500">Total Air Volume:</span>
+                        <span class="font-semibold text-right">${totalVolume.toLocaleString(undefined, {maximumFractionDigits: 0})} m³</span>
+                        
+                        <span class="text-gray-500">Combined CADR:</span>
+                        <span class="font-semibold text-right">${totalCadrPerHour.toLocaleString()} m³/hr</span>
+
+                        <span class="text-gray-500">Air Turnovers/Hour:</span>
+                        <span class="font-semibold text-right">${turnoversPerHour.toFixed(2)}</span>
+                        
+                        <span class="text-gray-500">Est. PM2.5 Removed:</span>
+                        <span class="font-semibold text-right">${pm25MassRemovedGrams.toFixed(2)} g</span>
+                        
+                        <span class="text-gray-500">Time to 25% Improvement:</span>
+                        <span class="font-semibold text-right">${prediction.timeTo25PercentImprovement > 0 ? prediction.timeTo25PercentImprovement + ' mins' : 'N/A'}</span>
+                    </div>
+                `;
+
+                DOMElements['operational-summary'].innerHTML = `
+                     <div class="grid grid-cols-2 gap-x-4 gap-y-2 text-sm">
+                         <span class="text-gray-500">Total Power Use:</span>
+                         <span class="font-semibold text-right">${totalPowerKWh.toFixed(2)} kWh</span>
+
+                         <span class="text-gray-500">Total Water Use:</span>
+                         <span class="font-semibold text-right">${totalWaterLiters.toFixed(2)} L</span>
+
+                         <span class="text-gray-500">Total Nutrient Use:</span>
+                         <span class="font-semibold text-right">${totalNutrientsMl.toFixed(1)} mL</span>
+
+                         <span class="text-gray-500">Fleet Status:</span>
+                         <span class="font-semibold text-right text-green-600">Healthy</span>
+
+                         <span class="text-gray-500">Next Service Due:</span>
+                         <span class="font-semibold text-right">~${Math.round(nextServiceDays)} days</span>
+                     </div>
+                `;
+
+                DOMElements['financial-summary'].innerHTML = `
+                     <div class="grid grid-cols-2 gap-x-4 gap-y-2 text-sm">
+                         <span class="text-gray-500">Total Energy Cost:</span>
+                         <span class="font-semibold text-right">$${totalEnergyCost.toFixed(2)}</span>
+
+                         <span class="text-gray-500">Total Operational Cost:</span>
+                         <span class="font-semibold text-right">$${totalOperationalCost.toFixed(2)}</span>
+                         
+                         <span class="text-gray-500 font-bold">Total Mission Cost:</span>
+                         <span class="font-bold text-right">$${totalMissionCost.toFixed(2)}</span>
+
+                         <span class="text-gray-500">Cost / AQI Point Reduced:</span>
+                         <span class="font-semibold text-right">$${costPerAqiPoint.toFixed(2)}</span>
+                     </div>
+                `;
+
+                DOMElements['time-prediction'].textContent = `${prediction.timeToTarget} minutes`;
+                this.renderPredictionChart(prediction.history);
+            },
+            renderPredictionChart(history) {
+                const ctx = DOMElements['prediction-chart'].getContext('2d');
+                if (AppState.ui.predictionChart) AppState.ui.predictionChart.destroy();
+                
+                const datasets = Object.keys(CONFIG.unit.filter_efficiency).map(pollutant => {
+                    const colors = { pm25: '#ef4444', pm10: '#f97316', no2: '#3b82f6', voc: '#a855f7' };
+                    return {
+                        label: pollutant.toUpperCase(),
+                        data: history.map(h => h[pollutant]),
+                        borderColor: colors[pollutant],
+                        tension: 0.1, borderWidth: 2, pointRadius: 0,
+                    };
+                });
+
+                AppState.ui.predictionChart = new Chart(ctx, {
+                    type: 'line',
+                    data: { labels: history.map(h => h.time), datasets },
+                    options: {
+                        responsive: true, maintainAspectRatio: false,
+                        scales: { 
+                            y: { title: { display: true, text: 'Concentration (µg/m³)' } }, 
+                            x: { title: { display: true, text: 'Time (minutes)' } } 
+                        }
+                    }
+                });
+            },
+            updateLiveAqiDisplay(pollutants) {
+                const aqi = AQI.calculateAqiFromPollutants(pollutants);
+                const aqiInfo = AQI.getAqiInfo(aqi);
+                DOMElements['live-aqi-display'].innerHTML = `
+                    <p class="text-sm text-gray-500">Current Route Avg. AQI</p>
+                    <p class="text-5xl font-bold my-1" style="color: ${aqiInfo.color};">${Math.round(aqi)}</p>
+                    <p class="font-semibold text-lg" style="color: ${aqiInfo.color};">${aqiInfo.label}</p>
+                `;
+            },
+            displayUnitDetails(unit) {
+                DOMElements['unit-details-placeholder'].classList.add('hidden');
+                DOMElements['unit-details'].classList.remove('hidden');
+
+                const aqi = AQI.calculateAqiFromPollutants(unit.pollutants);
+                const aqiInfo = AQI.getAqiInfo(aqi);
+
+                DOMElements['unit-details'].innerHTML = `
+                    <p><strong>Unit ID:</strong> ${unit.id}</p>
+                    <p><strong>Local AQI:</strong> <span class="font-bold" style="color:${aqiInfo.color};">${Math.round(aqi)}</span></p>
+                    <div class="text-xs grid grid-cols-2 gap-x-4 mt-1">
+                        <span>PM2.5: ${unit.pollutants.pm25.toFixed(1)}</span>
+                        <span>PM10: ${unit.pollutants.pm10.toFixed(1)}</span>
+                        <span>NO₂: ${unit.pollutants.no2.toFixed(1)}</span>
+                        <span>VOCs: ${unit.pollutants.voc.toFixed(1)}</span>
+                    </div>
+                `;
+            }
+        };
+
+        const MapManager = {
+            init() {
+                AppState.map = L.map(DOMElements['map']).setView(CONFIG.map.initialView, CONFIG.map.initialZoom);
+                L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png').addTo(AppState.map);
+                AppState.map.on('click', this.onMapClick.bind(this));
+            },
+            onMapClick(e) {
+                const state = AppState.ui.mapClickState;
+                if (state === 'setting_start') {
+                    AppState.startPoint = e.latlng;
+                    L.marker(AppState.startPoint, { title: 'Start' }).addTo(AppState.map);
+                    AppState.ui.mapClickState = 'idle';
+                    DOMElements['set-start-btn'].disabled = true;
+                    DOMElements['set-end-btn'].disabled = false;
+                    UIManager.updateInstruction("Now, set the END point.", true);
+                } else if (state === 'setting_end') {
+                    AppState.endPoint = e.latlng;
+                    L.marker(AppState.endPoint, { title: 'End' }).addTo(AppState.map);
+                    AppState.ui.mapClickState = 'idle';
+                    DOMElements['set-end-btn'].disabled = true;
+                    DOMElements['reset-btn'].classList.remove('hidden');
+                    Mission.initiate();
+                } else if (state === 'defining_area_corner1') {
+                    AppState.startPoint = e.latlng;
+                    L.marker(AppState.startPoint, { title: 'Corner 1' }).addTo(AppState.map);
+                    AppState.ui.mapClickState = 'defining_area_corner2';
+                    UIManager.updateInstruction("Click to set the second corner of the area.", true);
+                } else if (state === 'defining_area_corner2') {
+                    AppState.endPoint = e.latlng;
+                    L.marker(AppState.endPoint, { title: 'Corner 2' }).addTo(AppState.map);
+                    AppState.areaBounds = L.latLngBounds(AppState.startPoint, AppState.endPoint);
+                    AppState.areaRectangle = L.rectangle(AppState.areaBounds, { color: "#3b82f6", weight: 2 }).addTo(AppState.map);
+                    AppState.ui.mapClickState = 'idle';
+                    DOMElements['define-area-btn'].disabled = true;
+                    DOMElements['reset-btn'].classList.remove('hidden');
+                    Mission.initiate();
+                } else if (state === 'adding_traffic_source' || state === 'adding_industrial_source') {
+                    const type = state === 'adding_traffic_source' ? 'traffic' : 'industrial';
+                    const source = {
+                        coords: e.latlng,
+                        type: type,
+                        ...CONFIG.pollutionSources[type]
+                    };
+                    AppState.pollutionSources.push(source);
+                    this.drawPollutionSource(source);
+                    UIManager.log(`Added ${type} source.`, 'info');
+                    AppState.ui.mapClickState = 'idle';
+                    UIManager.updateInstruction("Source added. Ready for next action.", false);
+                }
+            },
+            drawRoute(start, end, callback) {
+                AppState.routingControl = L.Routing.control({
+                    waypoints: [start, end],
+                    createMarker: () => null,
+                    lineOptions: { styles: [{ color: '#3b82f6', opacity: 0.7, weight: 8 }] }
+                }).on('routesfound', e => {
+                    AppState.route = e.routes[0];
+                    callback(e.routes[0]);
+                }).addTo(AppState.map);
+            },
+            drawUnit(unit) {
+                const aqiInfo = AQI.getAqiInfo(AQI.calculateAqiFromPollutants(AppState.simulation.initialPollutants));
+                unit.circle = L.circle(unit.coords, {
+                    radius: CONFIG.unit.baseRadius,
+                    color: aqiInfo.color, fillColor: aqiInfo.color, fillOpacity: 0.3, weight: 1
+                }).addTo(AppState.map)
+                .on('click', () => {
+                    AppState.ui.selectedUnit = unit;
+                    UIManager.displayUnitDetails(unit);
+                });
+            },
+            drawPollutionSource(source) {
+                const iconHtml = source.type === 'traffic' ? '🚗' : '🏭';
+                const icon = L.divIcon({
+                    className: 'source-icon-container',
+                    html: `<div class="source-icon">${iconHtml}</div>`,
+                    iconSize: [24, 24]
+                });
+                L.marker(source.coords, { icon }).addTo(AppState.map)
+                    .bindPopup(`<b>${source.type.charAt(0).toUpperCase() + source.type.slice(1)} Source</b><br>Emitting ${source.pollutant.toUpperCase()}`);
+            },
+            updateUnitVisuals() {
+                AppState.deployedUnits.forEach(unit => {
+                    if (unit.circle) {
+                        const aqi = AQI.calculateAqiFromPollutants(unit.pollutants);
+                        const aqiInfo = AQI.getAqiInfo(aqi);
+                        unit.circle.setStyle({ color: aqiInfo.color, fillColor: aqiInfo.color });
+                    }
+                });
+                if (AppState.ui.selectedUnit) {
+                    UIManager.displayUnitDetails(AppState.ui.selectedUnit);
+                }
+            },
+            clearMap() {
+                 if (AppState.map) {
+                     AppState.map.eachLayer(layer => {
+                         if (layer instanceof L.Marker || layer instanceof L.Circle || layer instanceof L.Polyline || layer instanceof L.Rectangle) {
+                             AppState.map.removeLayer(layer);
+                         }
+                     });
+                     if (AppState.routingControl) {
+                         AppState.map.removeControl(AppState.routingControl);
+                         AppState.routingControl = null;
+                     }
+                 }
+            },
+            getPointAtDistance(route, distance) {
+                let traveled = 0;
+                const coords = route.coordinates;
+                for (let i = 0; i < coords.length - 1; i++) {
+                    const start = coords[i];
+                    const end = coords[i+1];
+                    const segmentDistance = start.distanceTo(end);
+                    if (traveled + segmentDistance >= distance) {
+                        const ratio = (distance - traveled) / segmentDistance;
+                        return L.latLng(start.lat + (end.lat - start.lat) * ratio, start.lng + (end.lng - start.lng) * ratio);
+                    }
+                    traveled += segmentDistance;
+                }
+                return coords[coords.length - 1];
+            }
+        };
+
+        const AQI = {
+            aqiToPm25(aqi) {
+                if (aqi <= 50) return aqi * (12/50);
+                if (aqi <= 100) return 12.1 + ((aqi-51) * (35.4-12.1))/(100-51);
+                if (aqi <= 150) return 35.5 + ((aqi-101) * (55.4-35.5))/(150-101);
+                return 55.5 + ((aqi - 151) * (150.4 - 55.5)) / (200 - 151);
+            },
+            pm25ToAqi(pm25) {
+                if (pm25 <= 12) return (50/12) * pm25;
+                if (pm25 <= 35.4) return 50 + ((100-51)/(35.4-12.1)) * (pm25 - 12.1);
+                if (pm25 <= 55.4) return 101 + ((150-101)/(55.4-35.5)) * (pm25 - 35.5);
+                if (pm25 <= 150.4) return 151 + ((200-151)/(150.4-55.5)) * (pm25 - 55.5);
+                return 201 + ((500-201)/(350.4-150.5)) * (pm25-150.5);
+            },
+            getInitialPollutantsFromAqi(baseAqi) {
+                const pm25 = this.aqiToPm25(baseAqi);
+                return {
+                    pm25: pm25,
+                    pm10: pm25 * CONFIG.simulation.pollutantMixRatio.pm10_to_pm25,
+                    no2: pm25 * CONFIG.simulation.pollutantMixRatio.no2_to_pm25,
+                    voc: pm25 * CONFIG.simulation.pollutantMixRatio.voc_to_pm25
+                };
+            },
+            calculateAqiFromPollutants(pollutants) {
+                return this.pm25ToAqi(pollutants.pm25);
+            },
+            getAqiInfo(aqi) {
+                if (aqi <= 50) return { label: 'Good', color: '#22c55e' };
+                if (aqi <= 100) return { label: 'Satisfactory', color: '#a3e635' };
+                if (aqi <= 200) return { label: 'Moderate', color: '#facc15' };
+                if (aqi <= 300) return { label: 'Poor', color: '#f97316' };
+                if (aqi <= 400) return { label: 'Very Poor', color: '#ef4444' };
+                return { label: 'Severe', color: '#b91c1c' };
+            }
+        };
+        
+        const Mission = {
+            async initiate() {
+                const isManualMode = DOMElements['source-manual'].checked;
+                let initialPollutants;
+                let centerPoint;
+
+                if (AppState.ui.analysisMode === 'route') {
+                    centerPoint = AppState.startPoint;
+                } else {
+                    centerPoint = AppState.areaBounds.getCenter();
+                }
+
+                if (isManualMode) {
+                    UIManager.log("Using manual pollutant values for scenario.");
+                    initialPollutants = {
+                        pm25: parseFloat(DOMElements['pm25-manual'].value) || 0,
+                        pm10: parseFloat(DOMElements['pm10-manual'].value) || 0,
+                        no2: parseFloat(DOMElements['no2-manual'].value) || 0,
+                        voc: parseFloat(DOMElements['voc-manual'].value) || 0,
+                    };
+                } else {
+                    UIManager.log("Fetching environmental data...");
+                    UIManager.showLoading(true, "Fetching live environmental data...");
+                    let baseAqi = 150; // Default fallback
+                    try {
+                        const url = `https://api.waqi.info/feed/geo:${centerPoint.lat};${centerPoint.lng}/?token=${CONFIG.api.waqiToken}`;
+                        const response = await fetch(url);
+                        const data = await response.json();
+                        if (data.status === "ok" && typeof data.data.aqi === 'number') {
+                            baseAqi = data.data.aqi;
+                            UIManager.log(`Live AQI at mission center: ${baseAqi}`, "info");
+                        } else {
+                            UIManager.log(`Could not fetch live AQI, using default: ${baseAqi}`, "warn");
+                        }
+                    } catch (err) {
+                        UIManager.log(`AQI API error, using default: ${baseAqi}`, "warn");
+                    }
+                    initialPollutants = AQI.getInitialPollutantsFromAqi(baseAqi);
+                }
+
+                AppState.simulation.initialPollutants = initialPollutants;
+                
+                if (AppState.ui.analysisMode === 'route') {
+                    UIManager.showLoading(true, "Calculating route...");
+                    MapManager.drawRoute(AppState.startPoint, AppState.endPoint, async (route) => {
+                        await this.deployUnitsRoute(route);
+                        this.finalizeInitiation(initialPollutants);
+                    });
+                } else {
+                    await this.deployUnitsArea(AppState.areaBounds);
+                    this.finalizeInitiation(initialPollutants);
+                }
+            },
+            finalizeInitiation(initialPollutants) {
+                UIManager.log("Running Deep Learning prediction model...");
+                const prediction = DL_Model.predictCleanupTime(initialPollutants, AppState.deployedUnits.length);
+                UIManager.log(`DL model predicts target AQI can be reached in ${prediction.timeToTarget} minutes.`, "success");
+                
+                UIManager.displayAnalysis(prediction);
+                UIManager.updateLiveAqiDisplay(initialPollutants);
+                
+                DOMElements['mission-live-view'].classList.remove('hidden');
+                DOMElements['play-pause-btn'].disabled = false;
+                UIManager.showLoading(false);
+                UIManager.updateInstruction("Analysis complete. Press Play to simulate.", false);
+            },
+            async deployUnitsRoute(route) {
+                const distance = route.summary.totalDistance;
+                const spacing = CONFIG.unit.baseRadius * 1.732;
+                const numUnits = Math.max(1, Math.ceil(distance / spacing));
+                
+                for(let i = 0; i < numUnits; i++) {
+                    const distanceAlong = (i / Math.max(1, numUnits - 1)) * distance;
+                    const coords = MapManager.getPointAtDistance(route, distanceAlong);
+                    await this.placeUnit(coords, i + 1);
+                }
+                UIManager.log(`Deployment calculated: ${numUnits} units required.`, "info");
+            },
+            async deployUnitsArea(bounds) {
+                const spacing = CONFIG.unit.baseRadius * 1.732;
+                const latDist = bounds.getNorthEast().distanceTo(bounds.getNorthWest());
+                const lngDist = bounds.getNorthEast().distanceTo(bounds.getSouthEast());
+                const rows = Math.ceil(lngDist / spacing);
+                const cols = Math.ceil(latDist / spacing);
+
+                let unitId = 1;
+                for (let r = 0; r < rows; r++) {
+                    for (let c = 0; c < cols; c++) {
+                        const lat = bounds.getSouth() + (bounds.getNorth() - bounds.getSouth()) * (r / Math.max(1, rows - 1));
+                        const lng = bounds.getWest() + (bounds.getEast() - bounds.getWest()) * (c / Math.max(1, cols - 1));
+                        await this.placeUnit(L.latLng(lat, lng), unitId++);
+                    }
+                }
+                UIManager.log(`Deployment calculated: ${rows * cols} units required.`, "info");
+            },
+            async placeUnit(coords, id) {
+                 const unit = { id, coords, circle: null, pollutants: {...AppState.simulation.initialPollutants} };
+                const { valid, reason } = await this.checkPlacement(coords.lat, coords.lng);
+                if(valid) {
+                    AppState.deployedUnits.push(unit);
+                    MapManager.drawUnit(unit);
+                } else {
+                    AppState.failedPlacements.push({coords, reason});
+                    L.marker(coords, { icon: L.divIcon({ className: 'text-red-500 font-bold text-2xl', html: '✕' }) }).addTo(AppState.map)
+                        .bindPopup(`Placement failed: ${reason}`).openPopup();
+                    UIManager.log(`Placement failed at [${coords.lat.toFixed(3)}, ${coords.lng.toFixed(3)}]: Obstacle (${reason})`, "warn");
+                }
+            },
+            async checkPlacement(lat, lng) {
+                try {
+                    const response = await fetch(`${CONFIG.api.nominatimUrl}?format=json&lat=${lat}&lon=${lng}&zoom=18`);
+                    const data = await response.json();
+                    if (data && data.osm_type && CONFIG.unplaceableTypes.includes(data.type)) {
+                        return { valid: false, reason: data.type };
+                    }
+                    return { valid: true, reason: null };
+                } catch (error) {
+                    console.error("Nominatim API error:", error);
+                    return { valid: true, reason: 'API_ERROR' }; // Fail open
+                }
+            },
+            reset() {
+                Mission.pauseSimulation();
+                MapManager.clearMap();
+                
+                AppState.startPoint = null;
+                AppState.endPoint = null;
+                AppState.areaBounds = null;
+                AppState.areaRectangle = null;
+                AppState.deployedUnits = [];
+                AppState.failedPlacements = [];
+                AppState.pollutionSources = [];
+                AppState.route = null;
+                AppState.simulation = {
+                    isRunning: false, intervalId: null, elapsedTime: 0,
+                    initialPollutants: null,
+                };
+                AppState.ui.mapClickState = 'idle';
+                
+                UIManager.resetUI();
+                UIManager.log("Mission reset.", "info");
+            },
+            toggleSimulation() {
+                if (AppState.simulation.isRunning) {
+                    Mission.pauseSimulation();
+                } else {
+                    Mission.startSimulation();
+                }
+            },
+            startSimulation() {
+                if (!AppState.simulation.initialPollutants) return;
+                AppState.simulation.isRunning = true;
+                UIManager.updatePlayPauseButton(true);
+                UIManager.log("Live simulation started.", "success");
+                
+                AppState.simulation.intervalId = setInterval(() => {
+                    Mission.tick();
+                }, CONFIG.simulation.tickInterval);
+            },
+            pauseSimulation() {
+                AppState.simulation.isRunning = false;
+                clearInterval(AppState.simulation.intervalId);
+                UIManager.updatePlayPauseButton(false);
+                if (AppState.simulation.initialPollutants) {
+                    UIManager.log("Live simulation paused.", "warn");
+                }
+            },
+            tick() {
+                AppState.simulation.elapsedTime += CONFIG.simulation.timePerTick;
+                
+                let nextPollutants = AppState.deployedUnits.map(u => ({...u.pollutants}));
+
+                // 1. Add pollution from sources
+                AppState.pollutionSources.forEach(source => {
+                    let nearestUnitIndex = -1;
+                    let minDistance = Infinity;
+                    AppState.deployedUnits.forEach((unit, i) => {
+                        const dist = source.coords.distanceTo(unit.coords);
+                        if (dist < minDistance) {
+                            minDistance = dist;
+                            nearestUnitIndex = i;
+                        }
+                    });
+                    if (nearestUnitIndex !== -1 && minDistance < CONFIG.unit.baseRadius * 2) {
+                        nextPollutants[nearestUnitIndex][source.pollutant] += source.emissionRate;
+                    }
+                });
+
+                // 2. Wind Drift
+                const windSpeedMps = AppState.environment.windSpeed * 1000 / 3600;
+                const windAngleRad = AppState.environment.windDirection * Math.PI / 180;
+
+                AppState.deployedUnits.forEach((unit, i) => {
+                    AppState.deployedUnits.forEach((neighbor, j) => {
+                        if (i === j) return;
+                        const dist = unit.coords.distanceTo(neighbor.coords);
+                        const angle = Math.atan2(neighbor.coords.lat - unit.coords.lat, neighbor.coords.lng - unit.coords.lng);
+                        const windAlignment = Math.cos(angle - windAngleRad);
+                        
+                        if (windAlignment > 0) { // If neighbor is downwind
+                            for (const p in unit.pollutants) {
+                                const driftAmount = unit.pollutants[p] * windAlignment * (windSpeedMps / dist) * CONFIG.simulation.wind_effect_multiplier;
+                                if (nextPollutants[i][p] - driftAmount > 0) {
+                                    nextPollutants[i][p] -= driftAmount;
+                                    nextPollutants[j][p] += driftAmount;
+                                }
+                            }
+                        }
+                    });
+                });
+
+                // 3. Purify own area
+                AppState.deployedUnits.forEach((unit, i) => {
+                    const volume = Math.PI * Math.pow(CONFIG.unit.baseRadius, 2) * CONFIG.unit.effectiveHeight;
+                    const cadrPerMinute = CONFIG.unit.cadr / 60;
+                    const turnovers = cadrPerMinute / volume;
+                    for (const p in unit.pollutants) {
+                        const removed = turnovers * CONFIG.unit.filter_efficiency[p];
+                        nextPollutants[i][p] *= (1 - removed);
+                    }
+                });
+
+                // Update unit pollutants from the temporary grid
+                let totalPollutants = { pm25: 0, pm10: 0, no2: 0, voc: 0 };
+                AppState.deployedUnits.forEach((unit, i) => {
+                    unit.pollutants = nextPollutants[i];
+                    for (const p in totalPollutants) {
+                        totalPollutants[p] += unit.pollutants[p];
+                    }
+                });
+
+                // Calculate new average pollutants for UI update
+                const avgPollutants = { ...totalPollutants };
+                if (AppState.deployedUnits.length > 0) {
+                    for (const p in avgPollutants) {
+                        avgPollutants[p] /= AppState.deployedUnits.length;
+                    }
+                }
+                
+                DOMElements['timeline-value'].textContent = AppState.simulation.elapsedTime;
+                UIManager.updateLiveAqiDisplay(avgPollutants);
+                MapManager.updateUnitVisuals();
+
+                if (AQI.calculateAqiFromPollutants(avgPollutants) <= CONFIG.simulation.targetAqi) {
+                    Mission.pauseSimulation();
+                    UIManager.log(`Mission Complete! Target AQI reached in ${AppState.simulation.elapsedTime} mins.`, 'success');
+                }
+            }
+        };
+
+        cacheDOMElements();
+        UIManager.init();
+        MapManager.init();
+        UIManager.log("Planner initialized. Ready for mission.", "success");
+
+        DOMElements['set-start-btn'].addEventListener('click', () => {
+            AppState.ui.mapClickState = 'setting_start';
+            UIManager.updateInstruction("Click on the map to set the START point.", true);
+        });
+        DOMElements['set-end-btn'].addEventListener('click', () => {
+            AppState.ui.mapClickState = 'setting_end';
+            UIManager.updateInstruction("Click on the map to set the END point.", true);
+        });
+        DOMElements['define-area-btn'].addEventListener('click', () => {
+            AppState.ui.mapClickState = 'defining_area_corner1';
+            UIManager.updateInstruction("Click on the map to set the first corner of the area.", true);
+        });
+        DOMElements['reset-btn'].addEventListener('click', () => Mission.reset());
+        DOMElements['play-pause-btn'].addEventListener('click', () => Mission.toggleSimulation());
+        DOMElements['add-traffic-btn'].addEventListener('click', () => {
+            AppState.ui.mapClickState = 'adding_traffic_source';
+            UIManager.updateInstruction("Click on the map to add a traffic source.", true);
+        });
+        DOMElements['add-industry-btn'].addEventListener('click', () => {
+            AppState.ui.mapClickState = 'adding_industrial_source';
+            UIManager.updateInstruction("Click on the map to add an industrial source.", true);
+        });
+    }
+    </script>
+</body>
+</html>
