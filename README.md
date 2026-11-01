@@ -66,6 +66,18 @@ The aim is to make the system concept, its assumptions, and its
 deployment logic inspectable. It is not a claim that a production
 purifier has been built, certified, or validated under controlled
 environmental-chamber conditions.
+
+Key capabilities
+- Interactive Three.js 3D purification mechanism.
+- ALVORA's multi-stage algae-based filtration architecture.
+- PM2.5, PM10, NO₂, and VOC simulation.
+- AQI monitoring and Chart.js visualisations.
+- HEPA, Plasma Ion, and Activated Carbon comparisons.
+- Energy, water, and nutrient consumption tracking.
+- Leaflet-based geographic deployment planner.
+- Route and area analysis with cleanup-time prediction.
+- System architecture diagrams using Mermaid.
+
 What the prototype includes
 Module	Implementation	What it is for
 3D mechanism	Three.js r128 and OrbitControls	Inspect a procedural 3D representation of ALVORA and comparison devices
