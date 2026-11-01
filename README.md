@@ -483,17 +483,17 @@ Requirements
 git clone https://github.com/<your-username>/<your-repository>.git
 cd <your-repository>
 2. Add the application file
-Place the provided application HTML at the repository root and name it
-index.html:
+The application is located at `alvora/index.html`:
 alvora/
 ├── index.html
-├── README.md
-└── assets/
+├── assets/
+├── css/
+└── js/
 3. Start a local server
 python -m http.server 8000
 4. Open the application
 Visit:
-http://localhost:8000
+http://localhost:8000/alvora/
 Opening the file directly with file:// may work for some dashboard
 functions, but a local HTTP server is recommended for consistent browser
 behavior and external service requests.
@@ -505,39 +505,38 @@ public repository. For a public deployment, move secrets behind a
 server-side endpoint rather than embedding them in client-side
 JavaScript.
 Project structure
-The supplied artifact is currently a single-file application. A
-maintainable future structure could be:
-alvora/
-├── index.html
+The repository is organized into application, hardware, research, and
+documentation areas:
+AIRJUNA/
 ├── README.md
-├── assets/
-│   ├── alvora-dashboard.png
-│   ├── alvora-3d-mechanism.gif
-│   ├── alvora-components.png
-│   ├── alvora-comparison.png
-│   └── alvora-planner.png
-├── src/
-│   ├── main.js
-│   ├── visualization/
-│   │   ├── scene.js
-│   │   ├── alvora-model.js
-│   │   └── particle-system.js
-│   ├── simulation/
-│   │   ├── pollutant-model.js
-│   │   ├── aqi.js
-│   │   └── resource-model.js
-│   ├── comparison/
-│   │   └── technology-data.js
-│   └── planner/
-│       ├── map.js
-│       ├── deployment.js
-│       └── cleanup-estimator.js
+├── alvora/
+│   ├── index.html
+│   ├── assets/
+│   │   ├── images/
+│   │   ├── icons/
+│   │   └── models/
+│   ├── css/
+│   │   └── styles.css
+│   └── js/
+│       ├── app.js
+│       ├── simulation.js
+│       ├── visualization.js
+│       ├── comparison.js
+│       └── planner.js
+├── hardware/
+│   ├── architecture/
+│   ├── circuit-design/
+│   ├── sensor-integration/
+│   └── documentation/
+├── research/
+│   ├── references.md
+│   └── testing-and-validation.md
 └── docs/
-    ├── model-assumptions.md
-    ├── validation-protocol.md
-    └── data-sources.md
-This is a suggested refactoring layout, not the current repository
-layout.
+    └── system-architecture.md
+
+The current dashboard remains self-contained in `alvora/index.html`.
+The CSS and JavaScript files establish the requested modular layout for
+future extraction without changing the working prototype.
 Limitations and responsible interpretation
 The current implementation has several important constraints:
 1. No trained ML model: DL_Model.predictCleanupTime() is
