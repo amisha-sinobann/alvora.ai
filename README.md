@@ -43,7 +43,6 @@ Table of contents
 - Limitations and responsible
   interpretation
 - Research and engineering roadmap
-- Contributing
 - Citation
 - License
 Overview
@@ -619,18 +618,6 @@ Product and deployment engineering
 - [ ] Record data-source timestamps and provenance in the UI.
 - [ ] Version every model parameter set and comparison dataset.
 - [ ] Add reproducible scenario exports.
-Contributing
-Contributions are welcome, especially in:
-- Simulation correctness and unit testing.
-- AQI methodology and pollutant data provenance.
-- 3D model clarity and accessibility.
-- Geospatial deployment algorithms.
-- Experimental protocol design and validation.
-- Documentation and reproducibility.
-For substantial changes, open an issue describing the problem,
-assumptions, and proposed approach before submitting a pull request.
-Please label simulated assumptions clearly and do not introduce
-experimental-performance claims without supporting evidence.
 Citation
 If you use ALVORA in a report, presentation, or research discussion,
 cite the repository and identify the exact version or commit used. A
